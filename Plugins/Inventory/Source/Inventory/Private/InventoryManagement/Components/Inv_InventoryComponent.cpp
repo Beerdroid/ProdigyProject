@@ -183,41 +183,61 @@ void UInv_InventoryComponent::BeginPlay()
 void UInv_InventoryComponent::ConstructInventory()
 {
 	OwningController = Cast<APlayerController>(GetOwner());
-	checkf(OwningController.IsValid(), TEXT("Inventory Component should have a Player Controller as Owner."))
+	checkf(OwningController.IsValid(), TEXT("Inventory Component should have a Player Controller as Owner."));
 	if (!OwningController->IsLocalController()) return;
 
 	InventoryMenu = CreateWidget<UInv_InventoryBase>(OwningController.Get(), InventoryMenuClass);
+	if (!IsValid(InventoryMenu)) return;
+
 	InventoryMenu->AddToViewport();
-	CloseInventoryMenu();
+
+	// Only UI state; DO NOT set input mode here
+	InventoryMenu->SetVisibility(ESlateVisibility::Collapsed);
+	InventoryMenu->SetIsEnabled(false);
+	bInventoryMenuOpen = false;
 }
 
 void UInv_InventoryComponent::OpenInventoryMenu()
 {
-	if (!IsValid(InventoryMenu)) return;
+	if (!IsValid(InventoryMenu) || !OwningController.IsValid()) return;
 
+	InventoryMenu->SetIsEnabled(true);
 	InventoryMenu->SetVisibility(ESlateVisibility::Visible);
 	bInventoryMenuOpen = true;
 
-	if (!OwningController.IsValid()) return;
-
 	FInputModeGameAndUI InputMode;
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	InputMode.SetHideCursorDuringCapture(false);
+
 	OwningController->SetInputMode(InputMode);
 	OwningController->SetShowMouseCursor(true);
+
+	if (GEngine && GEngine->GameViewport)
+	{
+		GEngine->GameViewport->SetMouseCaptureMode(EMouseCaptureMode::NoCapture);
+		GEngine->GameViewport->SetHideCursorDuringCapture(false);
+	}
 }
 
 void UInv_InventoryComponent::CloseInventoryMenu()
 {
-	if (!IsValid(InventoryMenu)) return;
+	if (!IsValid(InventoryMenu) || !OwningController.IsValid()) return;
 
 	InventoryMenu->SetVisibility(ESlateVisibility::Collapsed);
+	InventoryMenu->SetIsEnabled(false);
 	bInventoryMenuOpen = false;
 
-	if (!OwningController.IsValid()) return;
-
 	FInputModeGameOnly InputMode;
+	InputMode.SetConsumeCaptureMouseDown(false);
 	OwningController->SetInputMode(InputMode);
 
 	OwningController->SetShowMouseCursor(true);
 	OwningController->bEnableClickEvents = true;
 	OwningController->bEnableMouseOverEvents = true;
+
+	if (GEngine && GEngine->GameViewport)
+	{
+		GEngine->GameViewport->SetMouseCaptureMode(EMouseCaptureMode::CapturePermanently_IncludingInitialMouseDown);
+		GEngine->GameViewport->SetHideCursorDuringCapture(false);
+	}
 }
