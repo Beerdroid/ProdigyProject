@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "InventoryManagement/FastArray/Inv_FastArray.h"
+#include "Items/Manifest/Inv_ItemManifest.h"
 #include "Inv_InventoryComponent.generated.h"
 
 class UInv_ItemComponent;
@@ -25,6 +26,15 @@ class INVENTORY_API UInv_InventoryComponent : public UActorComponent
 public:
 	UInv_InventoryComponent();
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Inventory")
+	bool TryAddItemByManifest(const FInv_ItemManifest& Manifest, int32 Quantity, int32& OutRemainder);
+
+	UFUNCTION(Server, Reliable)
+	void Server_AddNewItemFromManifest(FInv_ItemManifest Manifest, int32 StackCount);
+
+	UFUNCTION(Server, Reliable)
+	void Server_AddStacksToItemFromManifest(FGameplayTag ItemType, int32 StackCount);
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Inventory")
 	void TryAddItem(UInv_ItemComponent* ItemComponent);

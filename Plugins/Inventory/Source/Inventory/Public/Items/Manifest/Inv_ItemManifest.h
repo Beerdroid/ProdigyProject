@@ -23,6 +23,7 @@ struct INVENTORY_API FInv_ItemManifest
 
 	TArray<TInstancedStruct<FInv_ItemFragment>>& GetFragmentsMutable() { return Fragments; }
 	UInv_InventoryItem* Manifest(UObject* NewOuter);
+	UInv_InventoryItem* ManifestCopy(UObject* NewOuter) const;
 	EInv_ItemCategory GetItemCategory() const { return ItemCategory; }
 	FGameplayTag GetItemType() const { return ItemType; }
 	void AssimilateInventoryFragments(UInv_CompositeBase* Composite) const;

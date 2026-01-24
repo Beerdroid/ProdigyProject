@@ -19,6 +19,20 @@ UInv_InventoryItem* FInv_ItemManifest::Manifest(UObject* NewOuter)
 	return Item;
 }
 
+UInv_InventoryItem* FInv_ItemManifest::ManifestCopy(UObject* NewOuter) const
+{
+	UInv_InventoryItem* Item = NewObject<UInv_InventoryItem>(NewOuter, UInv_InventoryItem::StaticClass());
+	Item->SetItemManifest(*this);
+
+	// Run "Manifest()" on the item's own copy
+	for (TInstancedStruct<FInv_ItemFragment>& Fragment : Item->GetItemManifestMutable().GetFragmentsMutable())
+	{
+		Fragment.GetMutable().Manifest();
+	}
+
+	return Item;
+}
+
 void FInv_ItemManifest::AssimilateInventoryFragments(UInv_CompositeBase* Composite) const
 {
 	const auto& InventoryItemFragments = GetAllFragmentsOfType<FInv_InventoryItemFragment>();

@@ -5,6 +5,7 @@
 
 #include "Inv_FastArray.generated.h"
 
+struct FInv_ItemManifest;
 struct FGameplayTag;
 class UInv_InventoryComponent;
 class UInv_InventoryItem;
@@ -47,6 +48,7 @@ struct FInv_InventoryFastArray : public FFastArraySerializer
 		return FastArrayDeltaSerialize<FInv_InventoryEntry, FInv_InventoryFastArray>(Entries, DeltaParams, *this);
 	}
 
+	UInv_InventoryItem* AddEntryFromManifest(const FInv_ItemManifest& Manifest);
 	UInv_InventoryItem* AddEntry(UInv_ItemComponent* ItemComponent);
 	UInv_InventoryItem* AddEntry(UInv_InventoryItem* Item);
 	void RemoveEntry(UInv_InventoryItem* Item);

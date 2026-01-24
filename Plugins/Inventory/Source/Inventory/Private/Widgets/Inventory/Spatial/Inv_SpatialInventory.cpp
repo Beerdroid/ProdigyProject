@@ -234,6 +234,23 @@ FInv_SlotAvailabilityResult UInv_SpatialInventory::HasRoomForItem(UInv_ItemCompo
 	}
 }
 
+FInv_SlotAvailabilityResult UInv_SpatialInventory::HasRoomForItem(const FInv_ItemManifest& Manifest,
+	int32 Quantity) const
+{
+	switch (Manifest.GetItemCategory())
+	{
+	case EInv_ItemCategory::Equippable:
+		return Grid_Equippables ? Grid_Equippables->HasRoomForItem(Manifest, Quantity) : FInv_SlotAvailabilityResult();
+	case EInv_ItemCategory::Consumable:
+		return Grid_Consumables ? Grid_Consumables->HasRoomForItem(Manifest, Quantity) : FInv_SlotAvailabilityResult();
+	case EInv_ItemCategory::Craftable:
+		return Grid_Craftables ? Grid_Craftables->HasRoomForItem(Manifest, Quantity) : FInv_SlotAvailabilityResult();
+	default:
+		UE_LOG(LogInventory, Error, TEXT("Manifest doesn't have a valid Item Category."));
+		return FInv_SlotAvailabilityResult();
+	}
+}
+
 void UInv_SpatialInventory::OnItemHovered(UInv_InventoryItem* Item)
 {
 	const auto& Manifest = Item->GetItemManifest();

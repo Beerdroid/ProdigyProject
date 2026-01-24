@@ -25,6 +25,62 @@ void UInv_InventoryComponent::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 	DOREPLIFETIME(ThisClass, InventoryList);
 }
 
+bool UInv_InventoryComponent::TryAddItemByManifest(const FInv_ItemManifest& Manifest, int32 Quantity, int32& OutRemainder)
+{
+	OutRemainder = Quantity;
+
+	if (Quantity <= 0) return false;
+
+	// Keep behavior deterministic: do the room calculation where your inventory menu exists.
+	// (Your current setup uses InventoryMenu logic even on server, so this is consistent.)
+	FInv_SlotAvailabilityResult Result = InventoryMenu->HasRoomForItem(Manifest, Quantity);
+
+	UInv_InventoryItem* FoundItem = InventoryList.FindFirstItemByType(Manifest.GetItemType());
+	Result.Item = FoundItem;
+
+	if (Result.TotalRoomToFill == 0)
+	{
+		NoRoomInInventory.Broadcast();
+		return false;
+	}
+
+	// Remainder is purely informational to the caller (quest/container/etc.)
+	OutRemainder = Result.Remainder;
+
+	if (Result.Item.IsValid() && Result.bStackable)
+	{
+		OnStackChange.Broadcast(Result);
+		Server_AddStacksToItemFromManifest(Manifest.GetItemType(), Result.TotalRoomToFill);
+	}
+	else
+	{
+		Server_AddNewItemFromManifest(Manifest, Result.bStackable ? Result.TotalRoomToFill : 0);
+	}
+
+	return (Result.TotalRoomToFill > 0);
+}
+
+void UInv_InventoryComponent::Server_AddNewItemFromManifest_Implementation(FInv_ItemManifest Manifest, int32 StackCount)
+{
+	UInv_InventoryItem* NewItem = InventoryList.AddEntryFromManifest(Manifest);
+	if (!IsValid(NewItem)) return;
+
+	NewItem->SetTotalStackCount(StackCount);
+
+	if (GetOwner()->GetNetMode() == NM_ListenServer || GetOwner()->GetNetMode() == NM_Standalone)
+	{
+		OnItemAdded.Broadcast(NewItem);
+	}
+}
+
+void UInv_InventoryComponent::Server_AddStacksToItemFromManifest_Implementation(FGameplayTag ItemType, int32 StackCount)
+{
+	UInv_InventoryItem* Item = InventoryList.FindFirstItemByType(ItemType);
+	if (!IsValid(Item)) return;
+
+	Item->SetTotalStackCount(Item->GetTotalStackCount() + StackCount);
+}
+
 void UInv_InventoryComponent::TryAddItem(UInv_ItemComponent* ItemComponent)
 {
 	FInv_SlotAvailabilityResult Result = InventoryMenu->HasRoomForItem(ItemComponent);
