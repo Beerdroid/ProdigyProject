@@ -57,16 +57,16 @@ public:
 	TObjectPtr<UQuestDatabase> QuestDatabase;
 
 	// -------------------- Public API --------------------
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(BlueprintCallable, Server, Reliable)
 	void ServerAddQuest(FName QuestID);
 
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(BlueprintCallable, Server, Reliable)
 	void ServerTurnInQuest(FName QuestID);
 
 	UFUNCTION(Server, Reliable)
 	void ServerTrackQuest(FName QuestID, bool bTrack);
 
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(BlueprintCallable, Server, Reliable)
 	void ServerAbandonQuest(FName QuestID);
 
 	bool TryGetQuestDef(FName QuestID, FQuestDefinition& OutDef) const;

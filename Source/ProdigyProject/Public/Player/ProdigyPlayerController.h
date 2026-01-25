@@ -37,6 +37,10 @@ public:
 	UFUNCTION(Server, Reliable, BlueprintCallable, Category="Quest")
 	void Server_NotifyQuestsKillTag(FGameplayTag TargetTag);
 
+	UFUNCTION(BlueprintCallable, Category="Interaction")
+	virtual void PrimaryInteract() override;
+
+
 protected:
 	// Add in BP child if you prefer; these will auto-find if present.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Quest")

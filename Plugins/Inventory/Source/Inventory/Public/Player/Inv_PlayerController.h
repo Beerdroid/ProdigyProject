@@ -26,6 +26,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	void ToggleInventory();
 
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="Interaction")
+	AActor* GetHoveredActor() const { return ThisActor.Get(); }
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void SetupInputComponent() override;
@@ -41,9 +44,17 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category="Movement|FX")
 	TObjectPtr<UNiagaraSystem> FXCursor = nullptr;
 
+	TWeakObjectPtr<UInv_InventoryComponent> InventoryComponent;
+
+	bool IsWithinPickupDistance(const AActor* TargetActor) const;
+
+	void StartMoveToPickup(AActor* TargetActor, UInv_ItemComponent* ItemComp);
+
+	bool TryPrimaryPickup(AActor* TargetActor);
 private:
 	// ---- Inventory / UI ----
-	void PrimaryInteract();
+	virtual void PrimaryInteract();
+
 	void CreateHUDWidget();
 
 	// ---- Tracing (hover message/highlight) ----
@@ -52,7 +63,6 @@ private:
 	FTimerHandle TraceTimerHandle;
 
 	// ---- Inventory component ----
-	TWeakObjectPtr<UInv_InventoryComponent> InventoryComponent;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory")
 	TObjectPtr<UInputMappingContext> DefaultIMC;
@@ -75,6 +85,9 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory")
 	TEnumAsByte<ECollisionChannel> ItemTraceChannel;
 
+	UPROPERTY(EditDefaultsOnly, Category = "Inventory")
+	TEnumAsByte<ECollisionChannel> InteractTraceChannel;
+
 	TWeakObjectPtr<AActor> ThisActor;
 	TWeakObjectPtr<AActor> LastActor;
 
@@ -86,8 +99,6 @@ private:
 	TWeakObjectPtr<UInv_ItemComponent> PendingPickupItemComp;
 	FTimerHandle PendingPickupTimerHandle;
 
-	bool TryPickupItemUnderMouse_Refresh();
-	void StartMoveToPickup(AActor* TargetActor, UInv_ItemComponent* ItemComp);
 	void TickPendingPickup();
 	void ClearPendingPickup();
 
@@ -107,5 +118,5 @@ private:
 	void Follow(const FVector& Location);
 	void MoveTo(const FVector& Location);
 
-	bool IsWithinPickupDistance(const AActor* TargetActor) const;
+
 };

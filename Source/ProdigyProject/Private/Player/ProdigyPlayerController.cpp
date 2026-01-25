@@ -3,6 +3,9 @@
 #include "Quest/QuestLogComponent.h"
 #include "Quest/Integration/QuestIntegrationComponent.h"
 #include "GameFramework/Actor.h"
+#include "Interfaces/UInv_Interactable.h"
+#include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "Items/Components/Inv_ItemComponent.h"
 
 AProdigyPlayerController::AProdigyPlayerController()
 {
@@ -14,6 +17,9 @@ void AProdigyPlayerController::BeginPlay()
 	Super::BeginPlay();
 
 	CacheQuestComponents();
+
+	UE_LOG(LogTemp, Warning, TEXT("ProdigyPC BeginPlay: %s Local=%d Pawn=%s"),
+	*GetNameSafe(this), IsLocalController(), *GetNameSafe(GetPawn()));
 }
 
 void AProdigyPlayerController::CacheQuestComponents()
@@ -63,6 +69,35 @@ void AProdigyPlayerController::NotifyQuestsKillTag(FGameplayTag TargetTag)
 	else
 	{
 		Server_NotifyQuestsKillTag(TargetTag);
+	}
+}
+
+void AProdigyPlayerController::PrimaryInteract()
+{
+	UE_LOG(LogTemp, Warning, TEXT("PrimaryInteract fired"));
+	AActor* Target = GetHoveredActor(); // getter from base, or use ThisActor.Get() if protected
+	if (!IsValid(Target))
+	{
+		return;
+	}
+
+	// 1) Try pickup first (keeps old inventory behavior)
+	if (TryPrimaryPickup(Target))
+	{
+		return;
+	}
+
+	// 2) Otherwise do generic interaction
+	if (Target->GetClass()->ImplementsInterface(UInv_Interactable::StaticClass()))
+	{
+		IInv_Interactable::Execute_Interact(Target, this, GetPawn());
+		return;
+	}
+
+	if (UActorComponent* InteractableComp = Target->FindComponentByInterface(UInv_Interactable::StaticClass()))
+	{
+		IInv_Interactable::Execute_Interact(InteractableComp, this, GetPawn());
+		return;
 	}
 }
 
