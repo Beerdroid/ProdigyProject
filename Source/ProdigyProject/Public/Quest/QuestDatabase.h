@@ -18,12 +18,21 @@ struct FQuestDefinition
 	UPROPERTY(EditAnywhere, BlueprintReadOnly)
 	FText Description;
 
+	// --- Story grouping ---
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Story")
+	FName StoryID = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Story")
+	int32 StorySequenceIndex = 0;
+
+	// --- Quest content (single stage) ---
 	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	TArray<FQuestStageDef> Stages;
+	TArray<FQuestObjectiveDef> Objectives;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	bool bAutoComplete = false;
+	bool bAutoComplete = false; // means auto-turn-in on complete
 
+	// Rewards (only granted on turn-in)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly)
 	TArray<FQuestItemReward> FinalItemRewards;
 
@@ -32,6 +41,10 @@ struct FQuestDefinition
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly)
 	int32 FinalXPReward = 0;
+
+	// Gating (optional but recommended)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Story")
+	TArray<FName> PrerequisiteQuestIDs;
 };
 
 

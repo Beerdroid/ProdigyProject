@@ -74,26 +74,29 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Quest")
 	void NotifyKillObjectiveTag(FGameplayTag TargetTag);
 
-	void InitializeStageProgress(FQuestRuntimeState& State, const FQuestDefinition& Def);
+	void InitializeQuestProgress(FQuestRuntimeState& State, const FQuestDefinition& Def);
 	bool AreAllObjectivesComplete(const FQuestRuntimeState& State, const FQuestDefinition& Def) const;
-	void RecomputeCollectObjectivesForStage(FQuestRuntimeState& State, const FQuestDefinition& Def);
+	void RecomputeCollectObjectives(FQuestRuntimeState& State, const FQuestDefinition& Def);
 	void ApplyKillProgress(FQuestRuntimeState& State, const FQuestDefinition& Def, const FGameplayTag& TargetTag, int32 Delta);
-	void TryAdvanceStageOrComplete(FQuestRuntimeState& State, const FQuestDefinition& Def);
-	void GrantStageRewards(const FQuestDefinition& Def, int32 StageIndex);
+	void TryCompleteQuest(FQuestRuntimeState& State, const FQuestDefinition& Def);
 	void GrantFinalRewards(const FQuestDefinition& Def);
 
-	const FQuestStageDef* GetStageDef(const FQuestDefinition& Def, int32 StageIndex) const;
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="Quest|Items")
+	bool TryGetItemManifest(FName ItemID, FInv_ItemManifest& OutManifest) const;
 
 	UFUNCTION()
 	void HandleInventoryDelta(const FInventoryDelta& Delta);
 
-	void RecomputeCollectObjectivesForStage_SingleItem(FQuestRuntimeState& State, const FQuestDefinition& Def, FName ChangedItemID);
+	void RecomputeCollectObjectives_SingleItem(FQuestRuntimeState& State, const FQuestDefinition& Def, FName ChangedItemID);
 
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category="Quest|UI")
 	TArray<FQuestLogEntryView> GetQuestLogEntries() const;
 
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category="Quest|UI")
 	TArray<FQuestLogEntryView> BuildQuestOfferViews(const TArray<FName>& QuestIDs) const;
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="Quest|UI")
+	bool GetQuestEntryView(FName QuestID, bool& bOutIsAccepted, FQuestLogEntryView& OutEntry) const;
 	
 protected:
 	virtual void BeginPlay() override;

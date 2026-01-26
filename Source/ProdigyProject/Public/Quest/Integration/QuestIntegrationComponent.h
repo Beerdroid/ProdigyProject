@@ -25,6 +25,10 @@ class PRODIGYPROJECT_API UQuestIntegrationComponent
 public:
 	UQuestIntegrationComponent();
 
+	virtual void BeginPlay() override;
+
+	void HandleInvDelta(FName ItemID, int32 DeltaQty, UObject* Context);
+
 	// ---- IQuestInventoryProvider ----
 	virtual int32 GetTotalQuantityByItemID_Implementation(FName ItemID) const override;
 	virtual bool AddItemByID_Implementation(FName ItemID, int32 Quantity, UObject* Context) override;

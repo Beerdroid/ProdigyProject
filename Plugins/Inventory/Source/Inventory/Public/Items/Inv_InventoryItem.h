@@ -19,6 +19,8 @@ public:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	virtual bool IsSupportedForNetworking() const override { return true; }
 
+	FName GetItemID() const { return ItemID; }
+	void SetItemID(FName InItemID);
 	void SetItemManifest(const FInv_ItemManifest& Manifest);
 	const FInv_ItemManifest& GetItemManifest() const { return ItemManifest.Get<FInv_ItemManifest>(); }
 	FInv_ItemManifest& GetItemManifestMutable() { return ItemManifest.GetMutable<FInv_ItemManifest>(); }
@@ -27,7 +29,9 @@ public:
 	int32 GetTotalStackCount() const { return TotalStackCount; }
 	void SetTotalStackCount(int32 Count) { TotalStackCount = Count; }
 private:
-
+	UPROPERTY(Replicated, EditAnywhere, Category="Inventory")
+	FName ItemID = NAME_None;
+	
 	UPROPERTY(VisibleAnywhere, meta = (BaseStruct = "/Script/Inventory.Inv_ItemManifest"), Replicated)
 	FInstancedStruct ItemManifest;
 

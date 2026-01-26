@@ -522,66 +522,122 @@ void UInv_InventoryGrid::AddStacks(const FInv_SlotAvailabilityResult& Result)
 
 void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEvent& MouseEvent)
 {
-	UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());	
-	
-	check(GridSlots.IsValidIndex(GridIndex));
+	// UI code must never crash the game.
+	if (!GridSlots.IsValidIndex(GridIndex) || !IsValid(GridSlots[GridIndex]))
+	{
+		return;
+	}
+
+	// Snapshot pointers BEFORE any unhover/cleanup, because unhover can invalidate hover state.
+	const bool bLeftClick  = IsLeftClick(MouseEvent);
+	const bool bRightClick = IsRightClick(MouseEvent);
+
 	UInv_InventoryItem* ClickedInventoryItem = GridSlots[GridIndex]->GetInventoryItem().Get();
+	const bool bClickedItemValid = IsValid(ClickedInventoryItem);
 
-	if (!IsValid(HoverItem) && IsLeftClick(MouseEvent))
+	// Optional: snapshot hover item pointers too (do not trust HoverItem after unhover)
+	const bool bHasHoverWidget = IsValid(HoverItem);
+	UInv_InventoryItem* HoverInvItem = bHasHoverWidget ? HoverItem->GetInventoryItem() : nullptr;
+	const bool bHoverInvItemValid = IsValid(HoverInvItem);
+
+	// Context menu / popup should typically work even if slot is empty (if you want), but you currently assume item exists.
+	if (bRightClick)
 	{
-		PickUp(ClickedInventoryItem, GridIndex);
+		// If you need to support popup on empty slot, handle it in CreateItemPopUp.
+		if (bClickedItemValid)
+		{
+			CreateItemPopUp(GridIndex);
+		}
+
+		UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
 		return;
 	}
 
-	if (IsRightClick(MouseEvent))
+	// LEFT CLICK behavior
+	if (bLeftClick)
 	{
-		CreateItemPopUp(GridIndex);
+		// If we're not holding anything (no hover item), clicking a valid item picks it up.
+		if (!bHasHoverWidget)
+		{
+			if (bClickedItemValid)
+			{
+				PickUp(ClickedInventoryItem, GridIndex);
+			}
+
+			UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
+			return;
+		}
+
+		// If we ARE holding something, clicking an empty slot should place it (if your code supports that).
+		// If you don't have placement logic, just bail safely.
+		if (!bClickedItemValid)
+		{
+			// Example if you have it:
+			// PlaceHoverItemIntoEmptySlot(GridIndex);
+			UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
+			return;
+		}
+
+		// From here: clicked item valid AND hover widget exists.
+		// Stacking logic only if hover inventory item valid.
+		if (bHoverInvItemValid && IsSameStackable(ClickedInventoryItem))
+		{
+			const int32 ClickedStackCount = GridSlots[GridIndex]->GetStackCount();
+
+			const FInv_StackableFragment* ClickedStackFrag =
+				ClickedInventoryItem->GetItemManifest().GetFragmentOfType<FInv_StackableFragment>();
+
+			// Defensive: if stackable flag says true but fragment is missing, do not crash.
+			if (!ClickedStackFrag)
+			{
+				UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
+				return;
+			}
+
+			const int32 MaxStackSize = ClickedStackFrag->GetMaxStackSize();
+			const int32 RoomInClickedSlot = MaxStackSize - ClickedStackCount;
+
+			const int32 HoveredStackCount = HoverItem->GetStackCount(); // HoverItem is valid, but stack count should be safe
+			// If HoverItem->GetStackCount() internally uses invalid data, you must guard it similarly.
+
+			if (ShouldSwapStackCounts(RoomInClickedSlot, HoveredStackCount, MaxStackSize))
+			{
+				SwapStackCounts(ClickedStackCount, HoveredStackCount, GridIndex);
+				UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
+				return;
+			}
+
+			if (ShouldConsumeHoverItemStacks(HoveredStackCount, RoomInClickedSlot))
+			{
+				ConsumeHoverItemStacks(ClickedStackCount, HoveredStackCount, GridIndex);
+				UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
+				return;
+			}
+
+			if (ShouldFillInStack(RoomInClickedSlot, HoveredStackCount))
+			{
+				FillInStack(RoomInClickedSlot, HoveredStackCount - RoomInClickedSlot, GridIndex);
+				UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
+				return;
+			}
+
+			// Clicked slot already full; do nothing.
+			UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
+			return;
+		}
+
+		// Swap logic: only if your query result says it's valid and we have a clicked item
+		if (CurrentQueryResult.ValidItem.IsValid())
+		{
+			SwapWithHoverItem(ClickedInventoryItem, GridIndex);
+		}
+
+		UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
 		return;
 	}
 
-	// Do the hovered item and the clicked inventory item share a type, and are they stackable?
-	if (IsSameStackable(ClickedInventoryItem))
-	{
-		const int32 ClickedStackCount = GridSlots[GridIndex]->GetStackCount();
-		const FInv_StackableFragment* StackableFragment = ClickedInventoryItem->GetItemManifest().GetFragmentOfType<FInv_StackableFragment>();
-		const int32 MaxStackSize = StackableFragment->GetMaxStackSize();
-		const int32 RoomInClickedSlot = MaxStackSize - ClickedStackCount;
-		const int32 HoveredStackCount = HoverItem->GetStackCount();
-		
-		// Should we swap their stack counts? (Room in the clicked slot == 0 && HoveredStackCount < MaxStackSize)
-		if (ShouldSwapStackCounts(RoomInClickedSlot, HoveredStackCount, MaxStackSize))
-		{
-			SwapStackCounts(ClickedStackCount, HoveredStackCount, GridIndex);
-			return;
-		}
-		
-		// Should we consume the hover item's stacks? (Room in the clicked slot >= HoveredStackCount)
-		if (ShouldConsumeHoverItemStacks(HoveredStackCount, RoomInClickedSlot))
-		{
-			ConsumeHoverItemStacks(ClickedStackCount, HoveredStackCount, GridIndex);
-			return;
-		}
-		
-		// Should we fill in the stacks of the clicked item? (and not consume the hover item)
-		if (ShouldFillInStack(RoomInClickedSlot, HoveredStackCount))
-		{
-			FillInStack(RoomInClickedSlot, HoveredStackCount - RoomInClickedSlot, GridIndex);
-			return;
-		}
-		
-		// Clicked slot is already full - do nothing (maybe play a sound?)
-		if (RoomInClickedSlot == 0)
-		{
-			return;
-		}
-	}
-	
-	// Make sure wee can swap with a valid item 
-	if (CurrentQueryResult.ValidItem.IsValid())
-	{
-		// Swap with the hover item.
-		SwapWithHoverItem(ClickedInventoryItem, GridIndex);
-	}
+	// Any other mouse button: safely clear hover state (optional)
+	UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
 }
 
 void UInv_InventoryGrid::CreateItemPopUp(const int32 GridIndex)
@@ -838,9 +894,26 @@ UUserWidget* UInv_InventoryGrid::GetHiddenCursorWidget()
 
 bool UInv_InventoryGrid::IsSameStackable(const UInv_InventoryItem* ClickedInventoryItem) const
 {
-	const bool bIsSameItem = ClickedInventoryItem == HoverItem->GetInventoryItem();
-	const bool bIsStackable = ClickedInventoryItem->IsStackable();
-	return bIsSameItem && bIsStackable && HoverItem->GetItemType().MatchesTagExact(ClickedInventoryItem->GetItemManifest().GetItemType());
+	if (!IsValid(ClickedInventoryItem) || !IsValid(HoverItem))
+	{
+		return false;
+	}
+
+	UInv_InventoryItem* HoverInvItem = HoverItem->GetInventoryItem();
+	if (!IsValid(HoverInvItem))
+	{
+		return false;
+	}
+
+	if (!ClickedInventoryItem->IsStackable() || !HoverInvItem->IsStackable())
+	{
+		return false;
+	}
+
+	const FGameplayTag ClickedType = ClickedInventoryItem->GetItemManifest().GetItemType();
+	const FGameplayTag HoverType   = HoverInvItem->GetItemManifest().GetItemType();
+
+	return ClickedType.IsValid() && HoverType.IsValid() && ClickedType.MatchesTagExact(HoverType);
 }
 
 void UInv_InventoryGrid::SwapWithHoverItem(UInv_InventoryItem* ClickedInventoryItem, const int32 GridIndex)

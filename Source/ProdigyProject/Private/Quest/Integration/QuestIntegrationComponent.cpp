@@ -1,7 +1,26 @@
 ﻿#include "Quest/Integration/QuestIntegrationComponent.h"
 
 #include "GameFramework/Actor.h"
+#include "InventoryManagement/Components/Inv_InventoryComponent.h"
 #include "Net/UnrealNetwork.h"
+
+void UQuestIntegrationComponent::BeginPlay()
+{
+	Super::BeginPlay();
+
+	if (AActor* Owner = GetOwner())
+	{
+		if (UInv_InventoryComponent* Inv = Owner->FindComponentByClass<UInv_InventoryComponent>())
+		{
+			Inv->OnInvDelta.AddUObject(this, &UQuestIntegrationComponent::HandleInvDelta);
+		}
+	}
+}
+
+void UQuestIntegrationComponent::HandleInvDelta(FName ItemID, int32 DeltaQty, UObject* Context)
+{
+	BroadcastInventoryDelta(ItemID, DeltaQty, Context);
+}
 
 UQuestIntegrationComponent::UQuestIntegrationComponent()
 {

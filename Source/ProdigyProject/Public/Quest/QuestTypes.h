@@ -70,25 +70,6 @@ struct FQuestObjectiveDef
 	int32 RequiredQuantity = 1;
 };
 
-USTRUCT(BlueprintType)
-struct FQuestStageDef
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	TArray<FQuestObjectiveDef> Objectives;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	TArray<FQuestItemReward> ItemRewards;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	int32 CurrencyReward = 0;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	int32 XPReward = 0;
-};
-
-
 
 // -------------------- Quest Runtime (Replicated) --------------------
 
@@ -113,9 +94,6 @@ struct FQuestRuntimeState : public FFastArraySerializerItem
 	FName QuestID = NAME_None;
 
 	UPROPERTY(BlueprintReadOnly)
-	int32 CurrentStage = 0;
-
-	UPROPERTY(BlueprintReadOnly)
 	bool bIsTracked = false;
 
 	UPROPERTY(BlueprintReadOnly)
@@ -125,7 +103,7 @@ struct FQuestRuntimeState : public FFastArraySerializerItem
 	bool bIsTurnedIn = false;
 
 	UPROPERTY(BlueprintReadOnly)
-	TArray<FQuestObjectiveProgress> ObjectiveProgress; // replicated as part of state item
+	TArray<FQuestObjectiveProgress> ObjectiveProgress;
 };
 
 
@@ -147,9 +125,12 @@ struct FQuestLogEntryView
 	UPROPERTY(BlueprintReadOnly) bool bIsCompleted = false;
 	UPROPERTY(BlueprintReadOnly) bool bIsTurnedIn = false;
 
-	// For current stage only (enough for quest log UI)
-	UPROPERTY(BlueprintReadOnly) TArray<FQuestObjectiveDef> CurrentObjectives;
-	UPROPERTY(BlueprintReadOnly) TArray<FQuestObjectiveProgress> CurrentObjectiveProgress;
+	UPROPERTY(BlueprintReadOnly) TArray<FQuestObjectiveDef> Objectives;
+	UPROPERTY(BlueprintReadOnly) TArray<FQuestObjectiveProgress> ObjectiveProgress;
+
+	UPROPERTY(BlueprintReadOnly) TArray<FQuestItemReward> FinalItemRewards;
+	UPROPERTY(BlueprintReadOnly) int32 FinalCurrencyReward = 0;
+	UPROPERTY(BlueprintReadOnly) int32 FinalXPReward = 0;
 };
 
 USTRUCT()

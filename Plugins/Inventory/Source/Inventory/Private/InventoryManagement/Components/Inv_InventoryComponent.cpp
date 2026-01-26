@@ -25,14 +25,17 @@ void UInv_InventoryComponent::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 	DOREPLIFETIME(ThisClass, InventoryList);
 }
 
-bool UInv_InventoryComponent::TryAddItemByManifest(const FInv_ItemManifest& Manifest, int32 Quantity, int32& OutRemainder)
+FName UInv_InventoryComponent::ResolveItemIDFromInventoryItem(const UInv_InventoryItem* Item) const
+{
+	return Item ? Item->GetItemID() : NAME_None;
+}
+
+bool UInv_InventoryComponent::TryAddItemByManifest(FName ItemID, const FInv_ItemManifest& Manifest, int32 Quantity, int32& OutRemainder)
 {
 	OutRemainder = Quantity;
 
-	if (Quantity <= 0) return false;
+	if (ItemID.IsNone() || Quantity <= 0) return false;
 
-	// Keep behavior deterministic: do the room calculation where your inventory menu exists.
-	// (Your current setup uses InventoryMenu logic even on server, so this is consistent.)
 	FInv_SlotAvailabilityResult Result = InventoryMenu->HasRoomForItem(Manifest, Quantity);
 
 	UInv_InventoryItem* FoundItem = InventoryList.FindFirstItemByType(Manifest.GetItemType());
@@ -44,28 +47,32 @@ bool UInv_InventoryComponent::TryAddItemByManifest(const FInv_ItemManifest& Mani
 		return false;
 	}
 
-	// Remainder is purely informational to the caller (quest/container/etc.)
 	OutRemainder = Result.Remainder;
 
 	if (Result.Item.IsValid() && Result.bStackable)
 	{
 		OnStackChange.Broadcast(Result);
-		Server_AddStacksToItemFromManifest(Manifest.GetItemType(), Result.TotalRoomToFill);
+		Server_AddStacksToItemFromManifest(ItemID, Manifest.GetItemType(), Result.TotalRoomToFill);
 	}
 	else
 	{
-		Server_AddNewItemFromManifest(Manifest, Result.bStackable ? Result.TotalRoomToFill : 0);
+		Server_AddNewItemFromManifest(ItemID, Manifest, Result.bStackable ? Result.TotalRoomToFill : 0);
 	}
 
 	return (Result.TotalRoomToFill > 0);
 }
 
-void UInv_InventoryComponent::Server_AddNewItemFromManifest_Implementation(FInv_ItemManifest Manifest, int32 StackCount)
+void UInv_InventoryComponent::Server_AddNewItemFromManifest_Implementation(FName ItemID, FInv_ItemManifest Manifest, int32 StackCount)
 {
+	if (ItemID.IsNone() || StackCount <= 0) return;
+
 	UInv_InventoryItem* NewItem = InventoryList.AddEntryFromManifest(Manifest);
 	if (!IsValid(NewItem)) return;
 
+	NewItem->SetItemID(ItemID);               
 	NewItem->SetTotalStackCount(StackCount);
+
+	EmitInvDeltaByItemID(ItemID, +StackCount, this);
 
 	if (GetOwner()->GetNetMode() == NM_ListenServer || GetOwner()->GetNetMode() == NM_Standalone)
 	{
@@ -73,12 +80,22 @@ void UInv_InventoryComponent::Server_AddNewItemFromManifest_Implementation(FInv_
 	}
 }
 
-void UInv_InventoryComponent::Server_AddStacksToItemFromManifest_Implementation(FGameplayTag ItemType, int32 StackCount)
+void UInv_InventoryComponent::Server_AddStacksToItemFromManifest_Implementation(FName ItemID, FGameplayTag ItemType, int32 StackCount)
 {
+	if (ItemID.IsNone() || StackCount <= 0) return;
+
 	UInv_InventoryItem* Item = InventoryList.FindFirstItemByType(ItemType);
 	if (!IsValid(Item)) return;
 
+	// Ensure identity is persisted on the entry (defensive for legacy items)
+	if (Item->GetItemID().IsNone())
+	{
+		Item->SetItemID(ItemID);
+	}
+
 	Item->SetTotalStackCount(Item->GetTotalStackCount() + StackCount);
+
+	EmitInvDeltaByItemID(ItemID, +StackCount, this);
 }
 
 void UInv_InventoryComponent::TryAddItem(UInv_ItemComponent* ItemComponent)
@@ -110,8 +127,19 @@ void UInv_InventoryComponent::TryAddItem(UInv_ItemComponent* ItemComponent)
 
 void UInv_InventoryComponent::Server_AddNewItem_Implementation(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder)
 {
+	if (!IsValid(ItemComponent) || StackCount < 0) return;
+
 	UInv_InventoryItem* NewItem = InventoryList.AddEntry(ItemComponent);
+	if (!IsValid(NewItem)) return;
+
+	const FName ItemID = ItemComponent->GetItemID();
+	NewItem->SetItemID(ItemID);
 	NewItem->SetTotalStackCount(StackCount);
+
+	if (StackCount > 0)
+	{
+		EmitInvDeltaByItemID(ItemID, +StackCount, this);
+	}
 
 	if (GetOwner()->GetNetMode() == NM_ListenServer || GetOwner()->GetNetMode() == NM_Standalone)
 	{
@@ -122,7 +150,8 @@ void UInv_InventoryComponent::Server_AddNewItem_Implementation(UInv_ItemComponen
 	{
 		ItemComponent->PickedUp();
 	}
-	else if (FInv_StackableFragment* StackableFragment = ItemComponent->GetItemManifestMutable().GetFragmentOfTypeMutable<FInv_StackableFragment>())
+	else if (FInv_StackableFragment* StackableFragment =
+		ItemComponent->GetItemManifestMutable().GetFragmentOfTypeMutable<FInv_StackableFragment>())
 	{
 		StackableFragment->SetStackCount(Remainder);
 	}
@@ -130,11 +159,21 @@ void UInv_InventoryComponent::Server_AddNewItem_Implementation(UInv_ItemComponen
 
 void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder)
 {
-	const FGameplayTag& ItemType = IsValid(ItemComponent) ? ItemComponent->GetItemManifest().GetItemType() : FGameplayTag::EmptyTag;
+	if (!IsValid(ItemComponent) || StackCount <= 0) return;
+
+	const FGameplayTag ItemType = ItemComponent->GetItemManifest().GetItemType();
 	UInv_InventoryItem* Item = InventoryList.FindFirstItemByType(ItemType);
 	if (!IsValid(Item)) return;
 
+	const FName ItemID = ItemComponent->GetItemID();
+	if (Item->GetItemID().IsNone())
+	{
+		Item->SetItemID(ItemID);
+	}
+
 	Item->SetTotalStackCount(Item->GetTotalStackCount() + StackCount);
+
+	EmitInvDeltaByItemID(ItemID, +StackCount, this);
 
 	if (Remainder == 0)
 	{
@@ -158,6 +197,9 @@ void UInv_InventoryComponent::Server_DropItem_Implementation(UInv_InventoryItem*
 		Item->SetTotalStackCount(NewStackCount);
 	}
 
+	const FName ItemID = ResolveItemIDFromInventoryItem(Item);
+	EmitInvDeltaByItemID(ItemID, -StackCount, this);
+
 	SpawnDroppedItem(Item, StackCount);
 }
 
@@ -175,7 +217,17 @@ void UInv_InventoryComponent::SpawnDroppedItem(UInv_InventoryItem* Item, int32 S
 	{
 		StackableFragment->SetStackCount(StackCount);
 	}
-	ItemManifest.SpawnPickupActor(this, SpawnLocation, SpawnRotation);
+	const FName ItemID = Item->GetItemID();
+	ItemManifest.SpawnPickupActor(this, ItemID, SpawnLocation, SpawnRotation);
+}
+
+
+void UInv_InventoryComponent::EmitInvDeltaByItemID(FName ItemID, int32 DeltaQty, UObject* Context)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
+	if (ItemID.IsNone() || DeltaQty == 0) return;
+
+	OnInvDelta.Broadcast(ItemID, DeltaQty, Context);
 }
 
 void UInv_InventoryComponent::Server_ConsumeItem_Implementation(UInv_InventoryItem* Item)
@@ -189,6 +241,9 @@ void UInv_InventoryComponent::Server_ConsumeItem_Implementation(UInv_InventoryIt
 	{
 		Item->SetTotalStackCount(NewStackCount);
 	}
+
+	const FName ItemID = ResolveItemIDFromInventoryItem(Item);
+	EmitInvDeltaByItemID(ItemID, -1, this);
 
 	if (FInv_ConsumableFragment* ConsumableFragment = Item->GetItemManifestMutable().GetFragmentOfTypeMutable<FInv_ConsumableFragment>())
 	{

@@ -23,6 +23,29 @@ void UInv_ItemComponent::InitItemManifest(FInv_ItemManifest CopyOfManifest)
 	ItemManifest = CopyOfManifest;
 }
 
+void UInv_ItemComponent::SetItemID(FName InItemID)
+{
+	// Defensive checks
+	if (InItemID.IsNone())
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("UInv_ItemComponent::SetItemID called with NAME_None"));
+		return;
+	}
+
+	// Prevent accidental reassignment
+	if (!ItemID.IsNone())
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("UInv_ItemComponent::SetItemID called twice (old=%s, new=%s)"),
+			*ItemID.ToString(),
+			*InItemID.ToString());
+		return;
+	}
+
+	ItemID = InItemID;
+}
+
 void UInv_ItemComponent::PickedUp()
 {
 	OnPickedUp();

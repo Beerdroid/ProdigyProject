@@ -279,85 +279,56 @@ void UQuestLogComponent::ServerAbandonQuest_Implementation(FName QuestID)
 	}
 }
 
-void UQuestLogComponent::InitializeStageProgress(FQuestRuntimeState& State, const FQuestDefinition& Def)
-{
-	State.ObjectiveProgress.Empty();
-
-	const FQuestStageDef* Stage = GetStageDef(Def, State.CurrentStage);
-	if (!Stage)
-	{
-		return;
-	}
-
-	for (const FQuestObjectiveDef& Obj : Stage->Objectives)
-	{
-		FQuestObjectiveProgress P;
-		P.ObjectiveID = Obj.ObjectiveID;
-		P.Progress = 0;
-		State.ObjectiveProgress.Add(P);
-	}
-
-	QuestStates.MarkItemDirty(State);
-	RecomputeCollectObjectivesForStage(State, Def);
-}
-
 bool UQuestLogComponent::AreAllObjectivesComplete(const FQuestRuntimeState& State, const FQuestDefinition& Def) const
 {
-	if (!Def.Stages.IsValidIndex(State.CurrentStage))
+	// Important: do NOT auto-complete a quest with zero objectives
+	if (Def.Objectives.Num() == 0)
 	{
 		return false;
 	}
-	
-	const FQuestStageDef* Stage = GetStageDef(Def, State.CurrentStage);
-	if (!Stage) return false;
 
-	for (const FQuestObjectiveDef& Obj : Stage->Objectives)
+	for (const FQuestObjectiveDef& Obj : Def.Objectives)
 	{
+		// If required is <= 0, treat as already satisfied (optional policy)
+		if (Obj.RequiredQuantity <= 0)
+		{
+			continue;
+		}
+
 		const int32 Current = GetObjectiveProgress(State, Obj.ObjectiveID);
 		if (Current < Obj.RequiredQuantity)
 		{
 			return false;
 		}
 	}
+
 	return true;
 }
 
-void UQuestLogComponent::RecomputeCollectObjectivesForStage(FQuestRuntimeState& State, const FQuestDefinition& Def)
+void UQuestLogComponent::RecomputeCollectObjectives(FQuestRuntimeState& State, const FQuestDefinition& Def)
 {
-	// Need inventory integration
 	if (!InventoryProvider || !InventoryProvider.GetObject())
-	{
-		return;
-	}
-
-	const FQuestStageDef* Stage = GetStageDef(Def, State.CurrentStage);
-	if (!Stage)
 	{
 		return;
 	}
 
 	UObject* InvObj = InventoryProvider.GetObject();
 
-	for (const FQuestObjectiveDef& Obj : Stage->Objectives)
+	for (const FQuestObjectiveDef& Obj : Def.Objectives)
 	{
 		if (Obj.Type != EQuestObjectiveType::Collect)
 		{
 			continue;
 		}
-
 		if (Obj.ItemID.IsNone())
 		{
 			continue;
 		}
 
-		// "Current possession" semantics: progress tracks current item count.
 		const int32 CurrentCount = IQuestInventoryProvider::Execute_GetTotalQuantityByItemID(InvObj, Obj.ItemID);
-
-		// Clamp to required, so objective doesn't show 37/5 unless you want that.
 		const int32 NewProgress = FMath::Clamp(CurrentCount, 0, Obj.RequiredQuantity);
 
-		const int32 OldProgress = GetObjectiveProgress(State, Obj.ObjectiveID);
-		if (OldProgress != NewProgress)
+		if (GetObjectiveProgress(State, Obj.ObjectiveID) != NewProgress)
 		{
 			SetObjectiveProgress(State, Obj.ObjectiveID, NewProgress);
 		}
@@ -367,156 +338,23 @@ void UQuestLogComponent::RecomputeCollectObjectivesForStage(FQuestRuntimeState& 
 void UQuestLogComponent::ApplyKillProgress(FQuestRuntimeState& State, const FQuestDefinition& Def,
 	const FGameplayTag& TargetTag, int32 Delta)
 {
-	const FQuestStageDef* Stage = GetStageDef(Def, State.CurrentStage);
-	if (!Stage)
-	{
-		return;
-	}
-
-	for (const FQuestObjectiveDef& Obj : Stage->Objectives)
+	for (const FQuestObjectiveDef& Obj : Def.Objectives)
 	{
 		if (Obj.Type != EQuestObjectiveType::Kill)
 		{
 			continue;
 		}
 
-		// Match tags (you can choose MatchesTagExact or MatchesTag depending on your tagging scheme)
 		if (TargetTag.IsValid() && Obj.TargetTag.IsValid() && TargetTag.MatchesTag(Obj.TargetTag))
 		{
 			const int32 Old = GetObjectiveProgress(State, Obj.ObjectiveID);
 			const int32 NewVal = Old + Delta;
 			SetObjectiveProgress(State, Obj.ObjectiveID, NewVal);
-
-			// Optional immediate server-side messaging hooks (client should react on OnRep)
-			if (Old < Obj.RequiredQuantity && NewVal >= Obj.RequiredQuantity)
-			{
-				// OnObjectiveCompletedMessage.Broadcast(Obj.ObjectiveID); // server-only
-			}
 		}
 	}
 }
 
-void UQuestLogComponent::ServerAddQuest_Implementation(FName QuestID)
-{
-	if (QuestID.IsNone())
-	{
-		return;
-	}
-
-	// Already have it?
-	if (FindQuestStateConst(QuestID))
-	{
-		return;
-	}
-
-	FQuestDefinition Def;
-	if (!TryGetQuestDef(QuestID, Def))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("ServerAddQuest: QuestDefinition not found for %s"), *QuestID.ToString());
-		return;
-	}
-
-	// Add runtime state
-	FQuestRuntimeState NewState;
-	NewState.QuestID = QuestID;
-	NewState.CurrentStage = 0;
-	NewState.bIsTracked = false;
-	NewState.bIsCompleted = false;
-	NewState.bIsTurnedIn = false;
-
-	QuestStates.Items.Add(NewState);
-	QuestStates.MarkArrayDirty();
-
-	// Initialize objectives for stage 0
-	FQuestRuntimeState* State = FindQuestStateMutable(QuestID);
-	if (State)
-	{
-		InitializeStageProgress(*State, Def);
-		QuestStates.MarkItemDirty(*State);
-	}
-}
-
-void UQuestLogComponent::NotifyKillObjectiveTag(FGameplayTag TargetTag)
-{
-	if (!GetOwner() || !GetOwner()->HasAuthority())
-	{
-		return;
-	}
-
-	if (!TargetTag.IsValid())
-	{
-		return;
-	}
-
-	BindIntegration();
-
-	bool bAnyChanged = false;
-
-	for (FQuestRuntimeState& State : QuestStates.Items)
-	{
-		if (State.bIsCompleted) continue;
-
-		FQuestDefinition Def;
-		if (!TryGetQuestDef(State.QuestID, Def)) continue;
-
-		const int32 BeforeStage = State.CurrentStage;
-		const bool bBeforeCompleted = State.bIsCompleted;
-		const bool bBeforeTurnedIn = State.bIsTurnedIn;
-
-		ApplyKillProgress(State, Def, TargetTag, 1);
-		TryAdvanceStageOrComplete(State, Def);
-
-		if (State.CurrentStage != BeforeStage ||
-			State.bIsCompleted != bBeforeCompleted ||
-			State.bIsTurnedIn != bBeforeTurnedIn)
-		{
-			bAnyChanged = true;
-		}
-	}
-
-	if (bAnyChanged)
-	{
-		NotifyQuestStatesChanged_LocalAuthority();
-	}
-}
-
-void UQuestLogComponent::NotifyInventoryChanged()
-{
-	if (!GetOwner() || !GetOwner()->HasAuthority())
-	{
-		return;
-	}
-
-	BindIntegration();
-
-	bool bAnyChanged = false;
-
-	for (FQuestRuntimeState& State : QuestStates.Items)
-	{
-		if (State.bIsCompleted) continue;
-
-		FQuestDefinition Def;
-		if (!TryGetQuestDef(State.QuestID, Def)) continue;
-
-		const int32 BeforeStage = State.CurrentStage;
-		const bool bBeforeCompleted = State.bIsCompleted;
-
-		RecomputeCollectObjectivesForStage(State, Def);
-		TryAdvanceStageOrComplete(State, Def);
-
-		if (State.CurrentStage != BeforeStage || State.bIsCompleted != bBeforeCompleted)
-		{
-			bAnyChanged = true;
-		}
-	}
-
-	if (bAnyChanged)
-	{
-		NotifyQuestStatesChanged_LocalAuthority();
-	}
-}
-
-void UQuestLogComponent::TryAdvanceStageOrComplete(FQuestRuntimeState& State, const FQuestDefinition& Def)
+void UQuestLogComponent::TryCompleteQuest(FQuestRuntimeState& State, const FQuestDefinition& Def)
 {
 	if (State.bIsCompleted)
 	{
@@ -528,64 +366,128 @@ void UQuestLogComponent::TryAdvanceStageOrComplete(FQuestRuntimeState& State, co
 		return;
 	}
 
-	GrantStageRewards(Def, State.CurrentStage);
-
-	State.CurrentStage++;
-
-	if (Def.Stages.IsValidIndex(State.CurrentStage))
-	{
-		InitializeStageProgress(State, Def);
-		QuestStates.MarkItemDirty(State);
-		return;
-	}
-
 	State.bIsCompleted = true;
 	QuestStates.MarkItemDirty(State);
 
-	// Do NOT grant final rewards here. Completion != turned-in.
 	if (Def.bAutoComplete)
 	{
-		// Auto-complete means: immediately turn-in on server.
 		ServerTurnInQuest_Implementation(State.QuestID);
 	}
 }
 
-void UQuestLogComponent::GrantStageRewards(const FQuestDefinition& Def, int32 StageIndex)
+void UQuestLogComponent::ServerAddQuest_Implementation(FName QuestID)
 {
-	if (!Def.Stages.IsValidIndex(StageIndex))
+	if (QuestID.IsNone()) return;
+
+	if (FindQuestStateConst(QuestID)) return;
+
+	FQuestDefinition Def;
+	if (!TryGetQuestDef(QuestID, Def))
 	{
+		UE_LOG(LogTemp, Warning, TEXT("ServerAddQuest: QuestDefinition not found for %s"), *QuestID.ToString());
 		return;
 	}
 
-	const FQuestStageDef& Stage = Def.Stages[StageIndex];
+	FQuestRuntimeState NewState;
+	NewState.QuestID = QuestID;
+	NewState.bIsTracked = false;
+	NewState.bIsCompleted = false;
+	NewState.bIsTurnedIn = false;
 
-	// Items via inventory provider
-	if (InventoryProvider)
+	QuestStates.Items.Add(NewState);
+	QuestStates.MarkArrayDirty();
+
+	if (FQuestRuntimeState* State = FindQuestStateMutable(QuestID))
 	{
-		for (const FQuestItemReward& R : Stage.ItemRewards)
-		{
-			if (R.ItemID.IsNone() || R.Quantity <= 0) continue;
+		InitializeQuestProgress(*State, Def);
+		TryCompleteQuest(*State, Def); // important if already has items
+		QuestStates.MarkItemDirty(*State);
+	}
 
-			IQuestInventoryProvider::Execute_AddItemByID(
-				InventoryProvider.GetObject(),
-				R.ItemID,
-				R.Quantity,
-				this
-			);
+	NotifyQuestStatesChanged_LocalAuthority();
+}
+
+void UQuestLogComponent::NotifyKillObjectiveTag(FGameplayTag TargetTag)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
+	if (!TargetTag.IsValid()) return;
+
+	BindIntegration();
+
+	bool bAnyChanged = false;
+
+	for (FQuestRuntimeState& State : QuestStates.Items)
+	{
+		if (State.bIsCompleted) continue;
+
+		FQuestDefinition Def;
+		if (!TryGetQuestDef(State.QuestID, Def)) continue;
+
+		const bool bBeforeCompleted = State.bIsCompleted;
+
+		ApplyKillProgress(State, Def, TargetTag, 1);
+		TryCompleteQuest(State, Def);
+
+		if (State.bIsCompleted != bBeforeCompleted)
+		{
+			bAnyChanged = true;
 		}
 	}
 
-	// Currency + XP via reward receiver
-	if (RewardReceiver)
+	if (bAnyChanged)
 	{
-		if (Stage.CurrencyReward > 0)
+		NotifyQuestStatesChanged_LocalAuthority();
+	}
+}
+
+void UQuestLogComponent::InitializeQuestProgress(FQuestRuntimeState& State, const FQuestDefinition& Def)
+{
+	State.ObjectiveProgress.Empty();
+	State.ObjectiveProgress.Reserve(Def.Objectives.Num());
+
+	for (const FQuestObjectiveDef& Obj : Def.Objectives)
+	{
+		FQuestObjectiveProgress P;
+		P.ObjectiveID = Obj.ObjectiveID;
+		P.Progress = 0;
+		State.ObjectiveProgress.Add(P);
+	}
+
+	QuestStates.MarkItemDirty(State);
+
+	// Precompute collect objectives from inventory possession
+	RecomputeCollectObjectives(State, Def);
+}
+
+void UQuestLogComponent::NotifyInventoryChanged()
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
+
+	BindIntegration();
+
+	bool bAnyChanged = false;
+
+	for (FQuestRuntimeState& State : QuestStates.Items)
+	{
+		if (State.bIsCompleted) continue;
+
+		FQuestDefinition Def;
+		if (!TryGetQuestDef(State.QuestID, Def)) continue;
+
+		const bool bBeforeCompleted = State.bIsCompleted;
+
+		RecomputeCollectObjectives(State, Def);
+		TryCompleteQuest(State, Def);
+
+		if (State.bIsCompleted != bBeforeCompleted)
 		{
-			IQuestRewardReceiver::Execute_AddCurrency(RewardReceiver.GetObject(), Stage.CurrencyReward);
+			bAnyChanged = true;
 		}
-		if (Stage.XPReward > 0)
-		{
-			IQuestRewardReceiver::Execute_AddXP(RewardReceiver.GetObject(), Stage.XPReward);
-		}
+	}
+
+	if (bAnyChanged)
+	{
+		NotifyQuestStatesChanged_LocalAuthority();
 	}
 }
 
@@ -623,6 +525,30 @@ void UQuestLogComponent::GrantFinalRewards(const FQuestDefinition& Def)
 	}
 }
 
+bool UQuestLogComponent::TryGetItemManifest(FName ItemID, FInv_ItemManifest& OutManifest) const
+{
+	OutManifest = FInv_ItemManifest();
+
+	if (ItemID.IsNone())
+	{
+		return false;
+	}
+
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	const AProdigyGameState* GS = World->GetGameState<AProdigyGameState>();
+	if (!GS)
+	{
+		return false;
+	}
+
+	return GS->FindItemManifest(ItemID, OutManifest);
+}
+
 
 bool UQuestLogComponent::TryGetQuestDef(FName QuestID, FQuestDefinition& OutDef) const
 {
@@ -633,27 +559,10 @@ bool UQuestLogComponent::TryGetQuestDef(FName QuestID, FQuestDefinition& OutDef)
 	return QuestDatabase->TryGetQuest(QuestID, OutDef);
 }
 
-const FQuestStageDef* UQuestLogComponent::GetStageDef(const FQuestDefinition& Def, int32 StageIndex) const
-{
-	if (!Def.Stages.IsValidIndex(StageIndex))
-	{
-		return nullptr;
-	}
-	return &Def.Stages[StageIndex];
-}
-
 void UQuestLogComponent::HandleInventoryDelta(const FInventoryDelta& Delta)
 {
-	// Inventory is authoritative on server; only recompute there.
-	if (!GetOwner() || !GetOwner()->HasAuthority())
-	{
-		return;
-	}
-
-	if (Delta.ItemID.IsNone())
-	{
-		return;
-	}
+	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
+	if (Delta.ItemID.IsNone()) return;
 
 	BindIntegration();
 
@@ -661,27 +570,17 @@ void UQuestLogComponent::HandleInventoryDelta(const FInventoryDelta& Delta)
 
 	for (FQuestRuntimeState& State : QuestStates.Items)
 	{
-		if (State.bIsCompleted)
-		{
-			continue;
-		}
+		if (State.bIsCompleted) continue;
 
 		FQuestDefinition Def;
-		if (!TryGetQuestDef(State.QuestID, Def))
-		{
-			continue;
-		}
+		if (!TryGetQuestDef(State.QuestID, Def)) continue;
 
-		const int32 BeforeStage = State.CurrentStage;
 		const bool bBeforeCompleted = State.bIsCompleted;
 
-		// Only recompute collect objectives potentially affected by this item.
-		RecomputeCollectObjectivesForStage_SingleItem(State, Def, Delta.ItemID);
+		RecomputeCollectObjectives_SingleItem(State, Def, Delta.ItemID);
+		TryCompleteQuest(State, Def);
 
-		// Completion may change as a result
-		TryAdvanceStageOrComplete(State, Def);
-
-		if (State.CurrentStage != BeforeStage || State.bIsCompleted != bBeforeCompleted)
+		if (State.bIsCompleted != bBeforeCompleted)
 		{
 			bAnyChanged = true;
 		}
@@ -693,29 +592,22 @@ void UQuestLogComponent::HandleInventoryDelta(const FInventoryDelta& Delta)
 	}
 }
 
-void UQuestLogComponent::RecomputeCollectObjectivesForStage_SingleItem(FQuestRuntimeState& State,
-	const FQuestDefinition& Def, FName ChangedItemID)
+void UQuestLogComponent::RecomputeCollectObjectives_SingleItem(FQuestRuntimeState& State, const FQuestDefinition& Def,
+	FName ChangedItemID)
 {
 	if (!InventoryProvider || !InventoryProvider.GetObject())
 	{
 		return;
 	}
 
-	const FQuestStageDef* Stage = GetStageDef(Def, State.CurrentStage);
-	if (!Stage)
-	{
-		return;
-	}
-
 	UObject* InvObj = InventoryProvider.GetObject();
 
-	for (const FQuestObjectiveDef& Obj : Stage->Objectives)
+	for (const FQuestObjectiveDef& Obj : Def.Objectives)
 	{
 		if (Obj.Type != EQuestObjectiveType::Collect)
 		{
 			continue;
 		}
-
 		if (Obj.ItemID != ChangedItemID)
 		{
 			continue;
@@ -735,44 +627,26 @@ TArray<FQuestLogEntryView> UQuestLogComponent::GetQuestLogEntries() const
 {
 	TArray<FQuestLogEntryView> Out;
 
-	// Optional: if DB wasn't ready at BeginPlay on client, try to re-fetch once here.
-	if (!QuestDatabase)
-	{
-		if (UWorld* World = GetWorld())
-		{
-			if (AProdigyGameState* GS = World->GetGameState<AProdigyGameState>())
-			{
-				const_cast<UQuestLogComponent*>(this)->QuestDatabase = GS->GetQuestDatabase();
-			}
-		}
-	}
-
 	for (const FQuestRuntimeState& State : QuestStates.Items)
 	{
 		FQuestLogEntryView V;
-
 		V.QuestID = State.QuestID;
-
-		// If it's in the quest log, it's accepted by definition.
 		V.bIsAccepted = true;
-
-		V.CurrentStage = State.CurrentStage;
 		V.bIsTracked = State.bIsTracked;
 		V.bIsCompleted = State.bIsCompleted;
 		V.bIsTurnedIn = State.bIsTurnedIn;
-
-		V.CurrentObjectiveProgress = State.ObjectiveProgress;
+		V.ObjectiveProgress = State.ObjectiveProgress;
 
 		FQuestDefinition Def;
 		if (TryGetQuestDef(State.QuestID, Def))
 		{
 			V.Title = Def.Title;
 			V.Description = Def.Description;
+			V.Objectives = Def.Objectives;
 
-			if (const FQuestStageDef* Stage = GetStageDef(Def, State.CurrentStage))
-			{
-				V.CurrentObjectives = Stage->Objectives;
-			}
+			V.FinalItemRewards = Def.FinalItemRewards;
+			V.FinalCurrencyReward = Def.FinalCurrencyReward;
+			V.FinalXPReward = Def.FinalXPReward;
 		}
 
 		Out.Add(MoveTemp(V));
@@ -783,90 +657,46 @@ TArray<FQuestLogEntryView> UQuestLogComponent::GetQuestLogEntries() const
 
 TArray<FQuestLogEntryView> UQuestLogComponent::BuildQuestOfferViews(const TArray<FName>& QuestIDs) const
 {
-		TArray<FQuestLogEntryView> Out;
+	TArray<FQuestLogEntryView> Out;
 	Out.Reserve(QuestIDs.Num());
 
-	// If DB wasn't ready at BeginPlay on client, try to re-fetch once here.
-	if (!QuestDatabase)
+	for (FName QuestID : QuestIDs)
 	{
-		if (UWorld* World = GetWorld())
-		{
-			if (AProdigyGameState* GS = World->GetGameState<AProdigyGameState>())
-			{
-				const_cast<UQuestLogComponent*>(this)->QuestDatabase = GS->GetQuestDatabase();
-			}
-		}
-	}
+		if (QuestID.IsNone()) continue;
 
-	for (const FName QuestID : QuestIDs)
-	{
-		if (QuestID.IsNone())
-		{
-			continue;
-		}
+		FQuestDefinition Def;
+		const bool bHasDef = TryGetQuestDef(QuestID, Def);
+		if (!bHasDef) continue;
 
 		FQuestLogEntryView V;
 		V.QuestID = QuestID;
+		V.Title = Def.Title;
+		V.Description = Def.Description;
+		V.Objectives = Def.Objectives;
 
-		// --- Definition ---
-		FQuestDefinition Def;
-		const bool bHasDef = TryGetQuestDef(QuestID, Def);
-		if (bHasDef)
-		{
-			V.Title = Def.Title;
-			V.Description = Def.Description;
-		}
-
-		// --- Runtime (if accepted) ---
 		const FQuestRuntimeState* State = FindQuestStateConst(QuestID);
 		if (State)
 		{
 			V.bIsAccepted = true;
-
-			V.CurrentStage = State->CurrentStage;
-			V.bIsTracked  = State->bIsTracked;
+			V.bIsTracked = State->bIsTracked;
 			V.bIsCompleted = State->bIsCompleted;
-			V.bIsTurnedIn  = State->bIsTurnedIn;
-
-			// progress is only meaningful if accepted
-			V.CurrentObjectiveProgress = State->ObjectiveProgress;
-
-			// objectives for current stage (requires definition)
-			if (bHasDef)
-			{
-				if (const FQuestStageDef* Stage = GetStageDef(Def, State->CurrentStage))
-				{
-					V.CurrentObjectives = Stage->Objectives;
-				}
-			}
+			V.bIsTurnedIn = State->bIsTurnedIn;
+			V.ObjectiveProgress = State->ObjectiveProgress;
 		}
 		else
 		{
-			// Not accepted: provide a preview (stage 0)
 			V.bIsAccepted = false;
-
-			V.CurrentStage = 0;
 			V.bIsTracked = false;
 			V.bIsCompleted = false;
 			V.bIsTurnedIn = false;
 
-			if (bHasDef)
+			V.ObjectiveProgress.Reset(Def.Objectives.Num());
+			for (const FQuestObjectiveDef& Obj : Def.Objectives)
 			{
-				if (const FQuestStageDef* Stage0 = GetStageDef(Def, 0))
-				{
-					V.CurrentObjectives = Stage0->Objectives;
-
-					// Optional but recommended: pre-fill progress rows with 0
-					// so the widget can render "0 / Required" uniformly.
-					V.CurrentObjectiveProgress.Reset(Stage0->Objectives.Num());
-					for (const FQuestObjectiveDef& Obj : Stage0->Objectives)
-					{
-						FQuestObjectiveProgress P;
-						P.ObjectiveID = Obj.ObjectiveID;
-						P.Progress = 0;
-						V.CurrentObjectiveProgress.Add(P);
-					}
-				}
+				FQuestObjectiveProgress P;
+				P.ObjectiveID = Obj.ObjectiveID;
+				P.Progress = 0;
+				V.ObjectiveProgress.Add(P);
 			}
 		}
 
@@ -876,8 +706,65 @@ TArray<FQuestLogEntryView> UQuestLogComponent::BuildQuestOfferViews(const TArray
 	return Out;
 }
 
+bool UQuestLogComponent::GetQuestEntryView(FName QuestID, bool& bOutIsAccepted, FQuestLogEntryView& OutEntry) const
+{
+	OutEntry = FQuestLogEntryView();
+	bOutIsAccepted = false;
+
+	if (QuestID.IsNone())
+	{
+		return false;
+	}
+
+	FQuestDefinition Def;
+	if (!TryGetQuestDef(QuestID, Def))
+	{
+		return false;
+	}
+
+	OutEntry.QuestID = QuestID;
+	OutEntry.Title = Def.Title;
+	OutEntry.Description = Def.Description;
+	OutEntry.Objectives = Def.Objectives;
+
+	if (const FQuestRuntimeState* State = FindQuestStateConst(QuestID))
+	{
+		bOutIsAccepted = true;
+		OutEntry.bIsAccepted = true;
+		OutEntry.bIsTracked = State->bIsTracked;
+		OutEntry.bIsCompleted = State->bIsCompleted;
+		OutEntry.bIsTurnedIn = State->bIsTurnedIn;
+		OutEntry.ObjectiveProgress = State->ObjectiveProgress;
+	}
+	else
+	{
+		OutEntry.bIsAccepted = false;
+		OutEntry.bIsTracked = false;
+		OutEntry.bIsCompleted = false;
+		OutEntry.bIsTurnedIn = false;
+
+		OutEntry.ObjectiveProgress.Reset(Def.Objectives.Num());
+		for (const FQuestObjectiveDef& Obj : Def.Objectives)
+		{
+			FQuestObjectiveProgress P;
+			P.ObjectiveID = Obj.ObjectiveID;
+			P.Progress = 0;
+			OutEntry.ObjectiveProgress.Add(P);
+		}
+	}
+
+	return true;
+}
+
+
 void UQuestLogComponent::ServerTurnInQuest_Implementation(FName QuestID)
 {
+	// Server only
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
 	FQuestRuntimeState* State = FindQuestStateMutable(QuestID);
 	if (!State)
 	{
@@ -902,21 +789,33 @@ void UQuestLogComponent::ServerTurnInQuest_Implementation(FName QuestID)
 		return;
 	}
 
+	// Make sure integration is bound (InventoryProvider/RewardReceiver)
+	BindIntegration();
+
 	// OPTIONAL: remove "collect" items here if you want a true turn-in sink.
-	// Requires RemoveItemByID on the provider.
-	
-	if (InventoryProvider)
+	// This now iterates Def.Objectives (no stages).
+	if (InventoryProvider.GetObject())
 	{
 		UObject* InvObj = InventoryProvider.GetObject();
-		for (const FQuestStageDef& Stage : Def.Stages)
+
+		for (const FQuestObjectiveDef& Obj : Def.Objectives)
 		{
-			for (const FQuestObjectiveDef& Obj : Stage.Objectives)
+			if (Obj.Type != EQuestObjectiveType::Collect)
 			{
-				if (Obj.Type == EQuestObjectiveType::Collect && !Obj.ItemID.IsNone())
-				{
-					IQuestInventoryProvider::Execute_RemoveItemByID(InvObj, Obj.ItemID, Obj.RequiredQuantity, this);
-				}
+				continue;
 			}
+
+			if (Obj.ItemID.IsNone() || Obj.RequiredQuantity <= 0)
+			{
+				continue;
+			}
+
+			IQuestInventoryProvider::Execute_RemoveItemByID(
+				InvObj,
+				Obj.ItemID,
+				Obj.RequiredQuantity,
+				this
+			);
 		}
 	}
 
@@ -926,7 +825,7 @@ void UQuestLogComponent::ServerTurnInQuest_Implementation(FName QuestID)
 	State->bIsTurnedIn = true;
 	QuestStates.MarkItemDirty(*State);
 
-	// This name is currently misleading; it's really "turned in".
+	// This dispatcher name is misleading; it's "turned in".
 	OnQuestCompleted.Broadcast(QuestID);
 
 	NotifyQuestStatesChanged_LocalAuthority();

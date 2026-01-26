@@ -12,6 +12,7 @@ UInv_InventoryItem* FInv_ItemManifest::Manifest(UObject* NewOuter)
 	Item->SetItemManifest(*this);
 	for (auto& Fragment : Item->GetItemManifestMutable().GetFragmentsMutable())
 	{
+		if (!Fragment.IsValid()) continue;
 		Fragment.GetMutable().Manifest();
 	}
 	ClearFragments();
@@ -27,6 +28,7 @@ UInv_InventoryItem* FInv_ItemManifest::ManifestCopy(UObject* NewOuter) const
 	// Run "Manifest()" on the item's own copy
 	for (TInstancedStruct<FInv_ItemFragment>& Fragment : Item->GetItemManifestMutable().GetFragmentsMutable())
 	{
+		if (!Fragment.IsValid()) continue;
 		Fragment.GetMutable().Manifest();
 	}
 
@@ -45,24 +47,36 @@ void FInv_ItemManifest::AssimilateInventoryFragments(UInv_CompositeBase* Composi
 	}
 }
 
-void FInv_ItemManifest::SpawnPickupActor(const UObject* WorldContextObject, const FVector& SpawnLocation, const FRotator& SpawnRotation)
+void FInv_ItemManifest::SpawnPickupActor(const UObject* WorldContextObject, FName ItemID, const FVector& SpawnLocation, const FRotator& SpawnRotation)
 {
 	if (!IsValid(PickupActorClass) || !IsValid(WorldContextObject)) return;
+	if (ItemID.IsNone()) return;
 
-	AActor* SpawnedActor = WorldContextObject->GetWorld()->SpawnActor<AActor>(PickupActorClass, SpawnLocation, SpawnRotation);
+	UWorld* World = WorldContextObject->GetWorld();
+	if (!IsValid(World)) return;
+
+	AActor* SpawnedActor = World->SpawnActor<AActor>(PickupActorClass, SpawnLocation, SpawnRotation);
 	if (!IsValid(SpawnedActor)) return;
 
-	// Set the item manifest, item category, item type, etc.
 	UInv_ItemComponent* ItemComp = SpawnedActor->FindComponentByClass<UInv_ItemComponent>();
-	check(ItemComp);
+	if (!IsValid(ItemComp))
+	{
+		UE_LOG(LogTemp, Error, TEXT("SpawnPickupActor: SpawnedActor %s has no UInv_ItemComponent"), *GetNameSafe(SpawnedActor));
+		SpawnedActor->Destroy();
+		return;
+	}
 
+	// Identity first
+	ItemComp->SetItemID(ItemID);
+
+	// Then instance data
 	ItemComp->InitItemManifest(*this);
 }
 
 void FInv_ItemManifest::ClearFragments()
 {
 	for (auto& Fragment : Fragments)
-	{
+	{ 
 		Fragment.Reset();
 	}
 	Fragments.Empty();

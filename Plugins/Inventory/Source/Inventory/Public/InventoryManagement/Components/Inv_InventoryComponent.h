@@ -17,6 +17,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FNoRoomInInventory);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FStackChange, const FInv_SlotAvailabilityResult&, Result);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FItemEquipStatusChanged, UInv_InventoryItem*, Item);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInventoryMenuToggled, bool, bOpen);
+DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnInvDeltaNative, FName /*ItemID*/, int32 /*DeltaQty*/, UObject* /*Context*/);
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent), Blueprintable)
 class INVENTORY_API UInv_InventoryComponent : public UActorComponent
@@ -28,13 +29,13 @@ public:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Inventory")
-	bool TryAddItemByManifest(const FInv_ItemManifest& Manifest, int32 Quantity, int32& OutRemainder);
+	bool TryAddItemByManifest(FName ItemID, const FInv_ItemManifest& Manifest, int32 Quantity, int32& OutRemainder);
 
 	UFUNCTION(Server, Reliable)
-	void Server_AddNewItemFromManifest(FInv_ItemManifest Manifest, int32 StackCount);
+	void Server_AddNewItemFromManifest(FName ItemID, FInv_ItemManifest Manifest, int32 StackCount);
 
 	UFUNCTION(Server, Reliable)
-	void Server_AddStacksToItemFromManifest(FGameplayTag ItemType, int32 StackCount);
+	void Server_AddStacksToItemFromManifest(FName ItemID, FGameplayTag ItemType, int32 StackCount);
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Inventory")
 	void TryAddItem(UInv_ItemComponent* ItemComponent);
@@ -63,6 +64,12 @@ public:
 	UInv_InventoryBase* GetInventoryMenu() const { return InventoryMenu; }
 	bool IsMenuOpen() const { return bInventoryMenuOpen; }
 
+	void SetItemID(FName InItemID);
+	void EmitInvDeltaByItemID(FName ItemID, int32 DeltaQty, UObject* Context);
+	FName ResolveItemIDFromManifest(const FInv_ItemManifest& Manifest) const;
+	FName ResolveItemIDFromItemComponent(const UInv_ItemComponent* ItemComponent) const;
+	FName ResolveItemIDFromInventoryItem(const UInv_InventoryItem* Item) const;
+
 	FInventoryItemChange OnItemAdded;
 	FInventoryItemChange OnItemRemoved;
 	FNoRoomInInventory NoRoomInInventory;
@@ -70,6 +77,7 @@ public:
 	FItemEquipStatusChanged OnItemEquipped;
 	FItemEquipStatusChanged OnItemUnequipped;
 	FInventoryMenuToggled OnInventoryMenuToggled;
+	FOnInvDeltaNative OnInvDelta;
 protected:
 	virtual void BeginPlay() override;
 
