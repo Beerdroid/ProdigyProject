@@ -234,19 +234,27 @@ FInv_SlotAvailabilityResult UInv_SpatialInventory::HasRoomForItem(UInv_ItemCompo
 	}
 }
 
-FInv_SlotAvailabilityResult UInv_SpatialInventory::HasRoomForItem(const FInv_ItemManifest& Manifest,
+FInv_SlotAvailabilityResult UInv_SpatialInventory::HasRoomForItem(FName ItemID, const FInv_ItemManifest& Manifest,
 	int32 Quantity) const
 {
+	if (ItemID.IsNone() || Quantity <= 0)
+	{
+		return FInv_SlotAvailabilityResult();
+	}
+
 	switch (Manifest.GetItemCategory())
 	{
 	case EInv_ItemCategory::Equippable:
-		return Grid_Equippables ? Grid_Equippables->HasRoomForItem(Manifest, Quantity) : FInv_SlotAvailabilityResult();
+		return Grid_Equippables ? Grid_Equippables->HasRoomForItem(ItemID, Manifest, Quantity) : FInv_SlotAvailabilityResult();
+
 	case EInv_ItemCategory::Consumable:
-		return Grid_Consumables ? Grid_Consumables->HasRoomForItem(Manifest, Quantity) : FInv_SlotAvailabilityResult();
+		return Grid_Consumables ? Grid_Consumables->HasRoomForItem(ItemID, Manifest, Quantity) : FInv_SlotAvailabilityResult();
+
 	case EInv_ItemCategory::Craftable:
-		return Grid_Craftables ? Grid_Craftables->HasRoomForItem(Manifest, Quantity) : FInv_SlotAvailabilityResult();
+		return Grid_Craftables ? Grid_Craftables->HasRoomForItem(ItemID, Manifest, Quantity) : FInv_SlotAvailabilityResult();
+
 	default:
-		UE_LOG(LogInventory, Error, TEXT("Manifest doesn't have a valid Item Category."));
+		UE_LOG(LogInventory, Error, TEXT("Manifest doesn't have a valid Item Category (ItemID=%s)"), *ItemID.ToString());
 		return FInv_SlotAvailabilityResult();
 	}
 }

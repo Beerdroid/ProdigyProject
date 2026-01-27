@@ -37,8 +37,7 @@ bool UInv_InventoryComponent::TryAddItemByManifest(FName ItemID, const FInv_Item
 	if (ItemID.IsNone() || Quantity <= 0) return false;
 
 	FInv_SlotAvailabilityResult Result = InventoryMenu->HasRoomForItem(Manifest, Quantity);
-
-	UInv_InventoryItem* FoundItem = InventoryList.FindFirstItemByType(Manifest.GetItemType());
+	UInv_InventoryItem* FoundItem = InventoryList.FindFirstItemByID(ItemID);
 	Result.Item = FoundItem;
 
 	if (Result.TotalRoomToFill == 0)
@@ -84,7 +83,7 @@ void UInv_InventoryComponent::Server_AddStacksToItemFromManifest_Implementation(
 {
 	if (ItemID.IsNone() || StackCount <= 0) return;
 
-	UInv_InventoryItem* Item = InventoryList.FindFirstItemByType(ItemType);
+	UInv_InventoryItem* Item = InventoryList.FindFirstItemByID(ItemID);
 	if (!IsValid(Item)) return;
 
 	// Ensure identity is persisted on the entry (defensive for legacy items)
@@ -102,7 +101,7 @@ void UInv_InventoryComponent::TryAddItem(UInv_ItemComponent* ItemComponent)
 {
 	FInv_SlotAvailabilityResult Result = InventoryMenu->HasRoomForItem(ItemComponent);
 
-	UInv_InventoryItem* FoundItem = InventoryList.FindFirstItemByType(ItemComponent->GetItemManifest().GetItemType());
+	UInv_InventoryItem* FoundItem = InventoryList.FindFirstItemByID(ItemComponent->GetItemID());
 	Result.Item = FoundItem;
 
 	if (Result.TotalRoomToFill == 0)
@@ -162,7 +161,7 @@ void UInv_InventoryComponent::Server_AddStacksToItem_Implementation(UInv_ItemCom
 	if (!IsValid(ItemComponent) || StackCount <= 0) return;
 
 	const FGameplayTag ItemType = ItemComponent->GetItemManifest().GetItemType();
-	UInv_InventoryItem* Item = InventoryList.FindFirstItemByType(ItemType);
+	UInv_InventoryItem* Item = InventoryList.FindFirstItemByID(ItemComponent->GetItemID());
 	if (!IsValid(Item)) return;
 
 	const FName ItemID = ItemComponent->GetItemID();

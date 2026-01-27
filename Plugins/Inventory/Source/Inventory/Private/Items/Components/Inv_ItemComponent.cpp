@@ -16,6 +16,7 @@ void UInv_ItemComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(ThisClass, ItemManifest);
+	DOREPLIFETIME(ThisClass, ItemID);
 }
 
 void UInv_ItemComponent::InitItemManifest(FInv_ItemManifest CopyOfManifest)

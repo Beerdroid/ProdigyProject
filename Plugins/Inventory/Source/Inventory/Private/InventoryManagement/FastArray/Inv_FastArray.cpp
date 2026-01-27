@@ -117,3 +117,18 @@ UInv_InventoryItem* FInv_InventoryFastArray::FindFirstItemByType(const FGameplay
 	});
 	return FoundItem ? FoundItem->Item : nullptr;
 }
+
+UInv_InventoryItem* FInv_InventoryFastArray::FindFirstItemByID(FName ItemID)
+{
+	for (auto& Entry : Entries)
+	{
+		if (UInv_InventoryItem* Item = Entry.Item.Get())
+		{
+			if (Item->GetItemID() == ItemID)
+			{
+				return Item;
+			}
+		}
+	}
+	return nullptr;
+}

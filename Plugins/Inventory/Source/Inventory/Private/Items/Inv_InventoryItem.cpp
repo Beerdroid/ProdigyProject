@@ -12,6 +12,7 @@ void UInv_InventoryItem::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 
 	DOREPLIFETIME(ThisClass, ItemManifest);
 	DOREPLIFETIME(ThisClass, TotalStackCount);
+	DOREPLIFETIME(ThisClass, ItemID);
 }
 
 void UInv_InventoryItem::SetItemID(FName InItemID)
