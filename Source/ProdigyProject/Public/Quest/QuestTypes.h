@@ -11,7 +11,8 @@ enum class EQuestObjectiveType : uint8
 	Collect,
 	Kill,
 	Talk,
-	Interact
+	Interact,
+	LocationVisit
 };
 
 USTRUCT(BlueprintType)
@@ -62,6 +63,9 @@ struct FQuestObjectiveDef
 	// Kill / Interact / Talk
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	FGameplayTag TargetTag;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	FGameplayTag EventTag;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	int32 RequiredQuantity = 1;

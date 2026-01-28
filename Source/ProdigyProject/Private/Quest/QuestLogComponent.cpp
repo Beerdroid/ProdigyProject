@@ -184,6 +184,47 @@ AActor* UQuestLogComponent::GetOwnerActorChecked() const
 	return OwnerActor;
 }
 
+void UQuestLogComponent::ApplyInteractProgress(FQuestRuntimeState& State, const FQuestDefinition& Def,
+	const FGameplayTag& TargetTag, int32 Delta)
+{
+	if (!TargetTag.IsValid() || Delta == 0) return;
+
+	for (const FQuestObjectiveDef& Obj : Def.Objectives)
+	{
+		if (Obj.Type != EQuestObjectiveType::Interact && Obj.Type != EQuestObjectiveType::Talk)
+		{
+			continue;
+		}
+
+		// Match semantic tag (you can switch to MatchesTagExact if you want strict)
+		if (Obj.TargetTag.IsValid() && TargetTag.MatchesTag(Obj.TargetTag))
+		{
+			const int32 Old = GetObjectiveProgress(State, Obj.ObjectiveID);
+			SetObjectiveProgress(State, Obj.ObjectiveID, Old + Delta);
+		}
+	}
+}
+
+void UQuestLogComponent::ApplyLocationProgress(FQuestRuntimeState& State, const FQuestDefinition& Def,
+	const FGameplayTag& TargetTag, int32 Delta)
+{
+	if (!TargetTag.IsValid() || Delta == 0) return;
+
+	for (const FQuestObjectiveDef& Obj : Def.Objectives)
+	{
+		if (Obj.Type != EQuestObjectiveType::LocationVisit)
+		{
+			continue;
+		}
+
+		if (Obj.TargetTag.IsValid() && TargetTag.MatchesTag(Obj.TargetTag))
+		{
+			const int32 Old = GetObjectiveProgress(State, Obj.ObjectiveID);
+			SetObjectiveProgress(State, Obj.ObjectiveID, Old + Delta);
+		}
+	}
+}
+
 
 FQuestRuntimeState* UQuestLogComponent::FindQuestStateMutable(FName QuestID)
 {
@@ -514,6 +555,136 @@ void UQuestLogComponent::GrantFinalRewards(const FQuestDefinition& Def)
 		{
 			IQuestRewardReceiver::Execute_AddXP(RewardObj, Def.FinalXPReward);
 		}
+	}
+}
+
+void UQuestLogComponent::NotifyInteractTargetTag(FGameplayTag TargetTag)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
+	if (!TargetTag.IsValid()) return;
+
+	BindIntegration();
+
+	bool bAnyChanged = false;
+
+	for (FQuestRuntimeState& State : QuestStates.Items)
+	{
+		if (State.bIsTurnedIn) continue;
+
+		FQuestDefinition Def;
+		if (!TryGetQuestDef(State.QuestID, Def)) continue;
+
+		const bool bBeforeCompleted = State.bIsCompleted;
+
+		ApplyInteractProgress(State, Def, TargetTag, 1);
+		TryCompleteQuest(State, Def);
+
+		if (State.bIsCompleted != bBeforeCompleted)
+		{
+			bAnyChanged = true;
+		}
+	}
+
+	if (bAnyChanged)
+	{
+		NotifyQuestStatesChanged_LocalAuthority();
+	}
+}
+
+void UQuestLogComponent::NotifyLocationVisitedTag(FGameplayTag TargetTag)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
+	if (!TargetTag.IsValid()) return;
+
+	BindIntegration();
+
+	bool bAnyChanged = false;
+
+	for (FQuestRuntimeState& State : QuestStates.Items)
+	{
+		if (State.bIsTurnedIn) continue;
+
+		FQuestDefinition Def;
+		if (!TryGetQuestDef(State.QuestID, Def)) continue;
+
+		const bool bBeforeCompleted = State.bIsCompleted;
+
+		ApplyLocationProgress(State, Def, TargetTag, 1);
+		TryCompleteQuest(State, Def);
+
+		if (State.bIsCompleted != bBeforeCompleted)
+		{
+			bAnyChanged = true;
+		}
+	}
+
+	if (bAnyChanged)
+	{
+		NotifyQuestStatesChanged_LocalAuthority();
+	}
+}
+
+void UQuestLogComponent::ServerNotifyObjectiveEvent_Implementation(FName QuestID, FName ObjectiveID, UObject* Context)
+{
+	// Server only
+	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
+
+	// Validate inputs
+	if (QuestID.IsNone() || ObjectiveID.IsNone()) return;
+
+	// Must have quest
+	FQuestRuntimeState* State = FindQuestStateMutable(QuestID);
+	if (!State) return;                 // quest not accepted
+	if (State->bIsTurnedIn) return;
+
+	// Load quest definition
+	FQuestDefinition Def;
+	if (!TryGetQuestDef(QuestID, Def)) return;
+
+	// Don't advance already completed quests (policy; you can allow if you want)
+	if (State->bIsCompleted)
+	{
+		return;
+	}
+
+	// Find objective in DB
+	const FQuestObjectiveDef* ObjDef = Def.Objectives.FindByPredicate([&](const FQuestObjectiveDef& O)
+	{
+		return O.ObjectiveID == ObjectiveID;
+	});
+	if (!ObjDef) return;
+
+	// Optional: ignore collect objectives here (they are inventory-driven)
+	// If you want to allow "Interact to Collect" objectives, remove this guard.
+	if (ObjDef->Type == EQuestObjectiveType::Collect)
+	{
+		return;
+	}
+
+	// Delta is always +1, clamp to required quantity from DB
+	const int32 Required = FMath::Max(0, ObjDef->RequiredQuantity);
+	const int32 Old = GetObjectiveProgress(*State, ObjectiveID);
+
+	int32 NewVal = Old + 1;
+	if (Required > 0)
+	{
+		NewVal = FMath::Clamp(NewVal, 0, Required);
+	}
+	else
+	{
+		NewVal = FMath::Max(0, NewVal);
+	}
+
+	const bool bProgressChanged = SetObjectiveProgress(*State, ObjectiveID, NewVal);
+
+	// Completion check
+	const bool bBeforeCompleted = State->bIsCompleted;
+	TryCompleteQuest(*State, Def);
+
+	// Rep + UI notify (listen server / standalone path already handled in your helper)
+	if (bProgressChanged || (State->bIsCompleted != bBeforeCompleted))
+	{
+		NotifyQuestStatesChanged_LocalAuthority();
 	}
 }
 

@@ -81,7 +81,14 @@ public:
 	void TryCompleteQuest(FQuestRuntimeState& State, const FQuestDefinition& Def);
 	void GrantFinalRewards(const FQuestDefinition& Def);
 
+	UFUNCTION(BlueprintCallable, Category="Quest|Events")
+	void NotifyInteractTargetTag(FGameplayTag TargetTag);
 
+	UFUNCTION(BlueprintCallable, Category="Quest|Events")
+	void NotifyLocationVisitedTag(FGameplayTag TargetTag);
+
+	UFUNCTION(BlueprintCallable, Server, Reliable)
+	void ServerNotifyObjectiveEvent(FName QuestID, FName ObjectiveID, UObject* Context);
 
 	UFUNCTION()
 	void HandleInventoryDelta(const FInventoryDelta& Delta);
@@ -129,4 +136,7 @@ private:
 
 		// Convenience
 	AActor* GetOwnerActorChecked() const;
+
+	void ApplyInteractProgress(FQuestRuntimeState& State, const FQuestDefinition& Def, const FGameplayTag& TargetTag, int32 Delta);
+	void ApplyLocationProgress(FQuestRuntimeState& State, const FQuestDefinition& Def, const FGameplayTag& TargetTag, int32 Delta);
 };
