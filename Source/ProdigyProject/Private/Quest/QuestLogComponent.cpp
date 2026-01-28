@@ -80,6 +80,10 @@ void UQuestLogComponent::BindIntegration()
 		return;
 	}
 
+	UE_LOG(LogTemp, Warning, TEXT("QuestLog BindIntegration: Owner=%s InventoryProvider=%s"),
+	*GetNameSafe(GetOwner()),
+	*GetNameSafe(InventoryProvider.GetObject()));
+
 	AActor* OwnerActor = GetOwner();
 	if (!OwnerActor)
 	{
@@ -217,7 +221,7 @@ int32 UQuestLogComponent::GetObjectiveProgress(const FQuestRuntimeState& State, 
 	return 0;
 }
 
-void UQuestLogComponent::SetObjectiveProgress(FQuestRuntimeState& State, FName ObjectiveID, int32 NewValue)
+bool UQuestLogComponent::SetObjectiveProgress(FQuestRuntimeState& State, FName ObjectiveID, int32 NewValue)
 {
 	NewValue = FMath::Max(0, NewValue);
 
@@ -225,20 +229,14 @@ void UQuestLogComponent::SetObjectiveProgress(FQuestRuntimeState& State, FName O
 	{
 		if (P.ObjectiveID == ObjectiveID)
 		{
-			const int32 OldValue = P.Progress;
+			if (P.Progress == NewValue)
+			{
+				return false; // no change
+			}
+
 			P.Progress = NewValue;
-
-			// Mark dirty for replication
 			QuestStates.MarkItemDirty(State);
-
-			// Client-facing messages are best sent via replicated state + UI comparison,
-			// but if you want immediate local feedback on owning client,
-			// you can also do Client RPC here. Keeping it simple: broadcast on server won't reach client.
-			// So leave messaging to UI comparing OnRep_QuestStates deltas,
-			// or add owning-client RPC if you want (not included).
-
-			(void)OldValue;
-			return;
+			return true;
 		}
 	}
 
@@ -246,8 +244,10 @@ void UQuestLogComponent::SetObjectiveProgress(FQuestRuntimeState& State, FName O
 	FQuestObjectiveProgress NewP;
 	NewP.ObjectiveID = ObjectiveID;
 	NewP.Progress = NewValue;
+
 	State.ObjectiveProgress.Add(NewP);
 	QuestStates.MarkItemDirty(State);
+	return true;
 }
 
 // -------------------- Server API --------------------
@@ -305,34 +305,28 @@ bool UQuestLogComponent::AreAllObjectivesComplete(const FQuestRuntimeState& Stat
 	return true;
 }
 
-void UQuestLogComponent::RecomputeCollectObjectives(FQuestRuntimeState& State, const FQuestDefinition& Def)
+bool UQuestLogComponent::RecomputeCollectObjectives(FQuestRuntimeState& State, const FQuestDefinition& Def)
 {
 	if (!InventoryProvider || !InventoryProvider.GetObject())
 	{
-		return;
+		return false;
 	}
 
+	bool bChanged = false;
 	UObject* InvObj = InventoryProvider.GetObject();
 
 	for (const FQuestObjectiveDef& Obj : Def.Objectives)
 	{
-		if (Obj.Type != EQuestObjectiveType::Collect)
-		{
-			continue;
-		}
-		if (Obj.ItemID.IsNone())
-		{
-			continue;
-		}
+		if (Obj.Type != EQuestObjectiveType::Collect) continue;
+		if (Obj.ItemID.IsNone()) continue;
 
 		const int32 CurrentCount = IQuestInventoryProvider::Execute_GetTotalQuantityByItemID(InvObj, Obj.ItemID);
 		const int32 NewProgress = FMath::Clamp(CurrentCount, 0, Obj.RequiredQuantity);
 
-		if (GetObjectiveProgress(State, Obj.ObjectiveID) != NewProgress)
-		{
-			SetObjectiveProgress(State, Obj.ObjectiveID, NewProgress);
-		}
+		bChanged |= SetObjectiveProgress(State, Obj.ObjectiveID, NewProgress);
 	}
+
+	return bChanged;
 }
 
 void UQuestLogComponent::ApplyKillProgress(FQuestRuntimeState& State, const FQuestDefinition& Def,
@@ -356,6 +350,9 @@ void UQuestLogComponent::ApplyKillProgress(FQuestRuntimeState& State, const FQue
 
 void UQuestLogComponent::TryCompleteQuest(FQuestRuntimeState& State, const FQuestDefinition& Def)
 {
+	UE_LOG(LogTemp, Warning, TEXT("TryCompleteQuest Quest=%s Completed=%d Auto=%d"),
+	*State.QuestID.ToString(), State.bIsCompleted, Def.bAutoComplete);
+	
 	if (State.bIsCompleted)
 	{
 		return;
@@ -469,7 +466,7 @@ void UQuestLogComponent::NotifyInventoryChanged()
 
 	for (FQuestRuntimeState& State : QuestStates.Items)
 	{
-		if (State.bIsCompleted) continue;
+		if (State.bIsTurnedIn) continue;
 
 		FQuestDefinition Def;
 		if (!TryGetQuestDef(State.QuestID, Def)) continue;
@@ -493,22 +490,17 @@ void UQuestLogComponent::NotifyInventoryChanged()
 
 void UQuestLogComponent::GrantFinalRewards(const FQuestDefinition& Def)
 {
-	if (InventoryProvider)
+	if (InventoryProvider && InventoryProvider.GetObject())
 	{
 		UObject* InvObj = InventoryProvider.GetObject();
-
 		for (const FQuestItemReward& R : Def.FinalItemRewards)
 		{
 			if (R.ItemID.IsNone() || R.Quantity <= 0) continue;
-
-			IQuestInventoryProvider::Execute_AddItemByID(
-				InvObj,
-				R.ItemID,
-				R.Quantity,
-				this
-			);
+			const bool bOk = IQuestInventoryProvider::Execute_AddItemByID(InvObj, R.ItemID, R.Quantity, this);
+			UE_LOG(LogTemp, Warning, TEXT("GrantFinalRewards AddItem %s x%d -> %d"), *R.ItemID.ToString(), R.Quantity, (int32)bOk);
 		}
 	}
+	UE_LOG(LogTemp, Warning, TEXT("GrantFinalRewards Currency=%d XP=%d"), Def.FinalCurrencyReward, Def.FinalXPReward);
 
 	if (RewardReceiver)
 	{
@@ -525,31 +517,6 @@ void UQuestLogComponent::GrantFinalRewards(const FQuestDefinition& Def)
 	}
 }
 
-bool UQuestLogComponent::TryGetItemManifest(FName ItemID, FInv_ItemManifest& OutManifest) const
-{
-	OutManifest = FInv_ItemManifest();
-
-	if (ItemID.IsNone())
-	{
-		return false;
-	}
-
-	const UWorld* World = GetWorld();
-	if (!World)
-	{
-		return false;
-	}
-
-	const AProdigyGameState* GS = World->GetGameState<AProdigyGameState>();
-	if (!GS)
-	{
-		return false;
-	}
-
-	return GS->FindItemManifest(ItemID, OutManifest);
-}
-
-
 bool UQuestLogComponent::TryGetQuestDef(FName QuestID, FQuestDefinition& OutDef) const
 {
 	if (!QuestDatabase || QuestID.IsNone())
@@ -561,6 +528,16 @@ bool UQuestLogComponent::TryGetQuestDef(FName QuestID, FQuestDefinition& OutDef)
 
 void UQuestLogComponent::HandleInventoryDelta(const FInventoryDelta& Delta)
 {
+	UE_LOG(LogTemp, Warning, TEXT("QuestLog HandleInventoryDelta Owner=%s HasAuthority=%d NetMode=%d Item=%s Delta=%d"),
+	*GetNameSafe(GetOwner()),
+	GetOwner() ? (int32)GetOwner()->HasAuthority() : -1,
+	(int32)GetNetMode(),
+	*Delta.ItemID.ToString(),
+	Delta.DeltaQuantity);
+
+	UE_LOG(LogTemp, Warning, TEXT("HandleInventoryDelta: quests=%d"), QuestStates.Items.Num());
+	
+	
 	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
 	if (Delta.ItemID.IsNone()) return;
 
@@ -570,17 +547,19 @@ void UQuestLogComponent::HandleInventoryDelta(const FInventoryDelta& Delta)
 
 	for (FQuestRuntimeState& State : QuestStates.Items)
 	{
-		if (State.bIsCompleted) continue;
+		UE_LOG(LogTemp, Warning, TEXT("Quest=%s completed=%d"), *State.QuestID.ToString(), State.bIsCompleted);
+		if (State.bIsTurnedIn) continue;
 
 		FQuestDefinition Def;
 		if (!TryGetQuestDef(State.QuestID, Def)) continue;
 
 		const bool bBeforeCompleted = State.bIsCompleted;
 
-		RecomputeCollectObjectives_SingleItem(State, Def, Delta.ItemID);
+		const bool bProgressChanged = RecomputeCollectObjectives_SingleItem(State, Def, Delta.ItemID);
+
 		TryCompleteQuest(State, Def);
 
-		if (State.bIsCompleted != bBeforeCompleted)
+		if (bProgressChanged || (State.bIsCompleted != bBeforeCompleted))
 		{
 			bAnyChanged = true;
 		}
@@ -592,35 +571,38 @@ void UQuestLogComponent::HandleInventoryDelta(const FInventoryDelta& Delta)
 	}
 }
 
-void UQuestLogComponent::RecomputeCollectObjectives_SingleItem(FQuestRuntimeState& State, const FQuestDefinition& Def,
+bool UQuestLogComponent::RecomputeCollectObjectives_SingleItem(FQuestRuntimeState& State, const FQuestDefinition& Def,
 	FName ChangedItemID)
 {
+	UE_LOG(LogTemp, Warning, TEXT("RecomputeSingleItem ENTER: providerObj=%s"), *GetNameSafe(InventoryProvider.GetObject()));
 	if (!InventoryProvider || !InventoryProvider.GetObject())
 	{
-		return;
+		return false;
 	}
 
+	bool bChanged = false;
 	UObject* InvObj = InventoryProvider.GetObject();
+
+	UE_LOG(LogTemp, Warning, TEXT("RecomputeSingleItem: Quest=%s ObjCount=%d Changed=%s"),
+		*State.QuestID.ToString(), Def.Objectives.Num(), *ChangedItemID.ToString());
 
 	for (const FQuestObjectiveDef& Obj : Def.Objectives)
 	{
-		if (Obj.Type != EQuestObjectiveType::Collect)
-		{
-			continue;
-		}
-		if (Obj.ItemID != ChangedItemID)
-		{
-			continue;
-		}
+		UE_LOG(LogTemp, Warning, TEXT("  ObjID=%s Type=%d ItemID=%s Req=%d"),
+			*Obj.ObjectiveID.ToString(), (int32)Obj.Type, *Obj.ItemID.ToString(), Obj.RequiredQuantity);
+
+		if (Obj.Type != EQuestObjectiveType::Collect) continue;
+		if (Obj.ItemID != ChangedItemID) continue;
 
 		const int32 CurrentCount = IQuestInventoryProvider::Execute_GetTotalQuantityByItemID(InvObj, Obj.ItemID);
 		const int32 NewProgress = FMath::Clamp(CurrentCount, 0, Obj.RequiredQuantity);
 
-		if (GetObjectiveProgress(State, Obj.ObjectiveID) != NewProgress)
-		{
-			SetObjectiveProgress(State, Obj.ObjectiveID, NewProgress);
-		}
+		UE_LOG(LogTemp, Warning, TEXT("  MATCH -> invCount=%d clamped=%d"), CurrentCount, NewProgress);
+
+		bChanged |= SetObjectiveProgress(State, Obj.ObjectiveID, NewProgress);
 	}
+
+	return bChanged;
 }
 
 TArray<FQuestLogEntryView> UQuestLogComponent::GetQuestLogEntries() const
@@ -759,74 +741,67 @@ bool UQuestLogComponent::GetQuestEntryView(FName QuestID, bool& bOutIsAccepted, 
 
 void UQuestLogComponent::ServerTurnInQuest_Implementation(FName QuestID)
 {
-	// Server only
-	if (!GetOwner() || !GetOwner()->HasAuthority())
-	{
-		return;
-	}
+	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
 
 	FQuestRuntimeState* State = FindQuestStateMutable(QuestID);
-	if (!State)
-	{
-		return;
-	}
-
-	// Already turned in
-	if (State->bIsTurnedIn)
-	{
-		return;
-	}
+	if (!State) return;
+	if (State->bIsTurnedIn) return;
 
 	FQuestDefinition Def;
-	if (!TryGetQuestDef(State->QuestID, Def))
-	{
-		return;
-	}
+	if (!TryGetQuestDef(State->QuestID, Def)) return;
 
-	// Require completion
-	if (!State->bIsCompleted)
-	{
-		return;
-	}
-
-	// Make sure integration is bound (InventoryProvider/RewardReceiver)
 	BindIntegration();
 
-	// OPTIONAL: remove "collect" items here if you want a true turn-in sink.
-	// This now iterates Def.Objectives (no stages).
-	if (InventoryProvider.GetObject())
+	UE_LOG(LogTemp, Warning, TEXT("TurnInQuest ENTER Quest=%s Completed=%d TurnedIn=%d InvProv=%s RewardRecv=%s"),
+		*QuestID.ToString(),
+		State->bIsCompleted,
+		State->bIsTurnedIn,
+		*GetNameSafe(InventoryProvider.GetObject()),
+		*GetNameSafe(RewardReceiver.GetObject()));
+
+	// Recompute collect objectives on-demand to avoid relying on delta timing.
+	if (InventoryProvider && InventoryProvider.GetObject())
+	{
+		RecomputeCollectObjectives(*State, Def);
+	}
+
+	// Evaluate completion here (manual turn-in should work even if TryCompleteQuest wasn't triggered yet)
+	if (!AreAllObjectivesComplete(*State, Def))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("TurnInQuest FAIL Quest=%s: objectives not complete"), *QuestID.ToString());
+		return;
+	}
+
+	// Mark complete (for UI correctness / replication)
+	if (!State->bIsCompleted)
+	{
+		State->bIsCompleted = true;
+	}
+
+	// Consume collect items
+	if (InventoryProvider && InventoryProvider.GetObject())
 	{
 		UObject* InvObj = InventoryProvider.GetObject();
 
 		for (const FQuestObjectiveDef& Obj : Def.Objectives)
 		{
-			if (Obj.Type != EQuestObjectiveType::Collect)
-			{
-				continue;
-			}
+			if (Obj.Type != EQuestObjectiveType::Collect) continue;
+			if (Obj.ItemID.IsNone() || Obj.RequiredQuantity <= 0) continue;
 
-			if (Obj.ItemID.IsNone() || Obj.RequiredQuantity <= 0)
-			{
-				continue;
-			}
+			UE_LOG(LogTemp, Warning, TEXT("TurnInQuest REMOVE Item=%s Qty=%d"), *Obj.ItemID.ToString(), Obj.RequiredQuantity);
 
-			IQuestInventoryProvider::Execute_RemoveItemByID(
-				InvObj,
-				Obj.ItemID,
-				Obj.RequiredQuantity,
-				this
-			);
+			IQuestInventoryProvider::Execute_RemoveItemByID(InvObj, Obj.ItemID, Obj.RequiredQuantity, this);
 		}
 	}
 
-	// Grant final rewards ONLY on turn-in
+	// Grant rewards
+	UE_LOG(LogTemp, Warning, TEXT("TurnInQuest GRANT rewards Quest=%s"), *QuestID.ToString());
 	GrantFinalRewards(Def);
 
+	// Finalize
 	State->bIsTurnedIn = true;
 	QuestStates.MarkItemDirty(*State);
 
-	// This dispatcher name is misleading; it's "turned in".
 	OnQuestCompleted.Broadcast(QuestID);
-
 	NotifyQuestStatesChanged_LocalAuthority();
 }

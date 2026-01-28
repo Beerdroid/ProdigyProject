@@ -132,3 +132,20 @@ UInv_InventoryItem* FInv_InventoryFastArray::FindFirstItemByID(FName ItemID)
 	}
 	return nullptr;
 }
+
+int32 FInv_InventoryFastArray::GetTotalQuantityByItemID(FName ItemID) const
+{
+	if (ItemID.IsNone()) return 0;
+
+	int32 Total = 0;
+	for (const FInv_InventoryEntry& E : Entries)
+	{
+		const UInv_InventoryItem* Item = E.Item;
+		if (IsValid(Item) && Item->GetItemID() == ItemID)
+		{
+			Total += FMath::Max(0, Item->GetTotalStackCount());
+		}
+	}
+	return Total;
+}
+

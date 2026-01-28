@@ -5,6 +5,7 @@
 #include "Quest/QuestTypes.h"
 #include "QuestInventoryProvider.generated.h"
 
+struct FInv_ItemView;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnQuestInventoryDelta, const FInventoryDelta&, Delta);
 
 UINTERFACE(BlueprintType)
@@ -25,7 +26,10 @@ public:
 	bool AddItemByID(FName ItemID, int32 Quantity, UObject* Context);
 
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Quest|Inventory")
-	int32 RemoveItemByID(FName ItemID, int32 Quantity, UObject* Context);
+	void RemoveItemByID(FName ItemID, int32 Quantity, UObject* Context);
+
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Quest|Items")
+	bool GetItemViewByID(FName ItemID, FInv_ItemView& OutView) const;
 
 	virtual FOnQuestInventoryDelta& GetInventoryDeltaDelegate() = 0;
 };

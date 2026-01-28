@@ -54,6 +54,7 @@ struct FInv_InventoryFastArray : public FFastArraySerializer
 	void RemoveEntry(UInv_InventoryItem* Item);
 	UInv_InventoryItem* FindFirstItemByType(const FGameplayTag& ItemType);
 	UInv_InventoryItem* FindFirstItemByID(FName ItemID);
+	int32 GetTotalQuantityByItemID(FName ItemID) const;
 
 private:
 	friend UInv_InventoryComponent;

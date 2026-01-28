@@ -59,8 +59,13 @@ private:
 	TWeakObjectPtr<UCanvasPanel> OwningCanvasPanel;
 
 	void ConstructGrid();
-
-
+	
+	UFUNCTION()
+	void HandleInvDelta(FName ItemID, int32 DeltaQty, UObject* Context);
+	
+	UFUNCTION()
+	void HandleItemRemoved(UInv_InventoryItem* Item);
+	
 	void AddItemToIndices(const FInv_SlotAvailabilityResult& Result, UInv_InventoryItem* NewItem);
 	bool MatchesCategory(const UInv_InventoryItem* Item) const;
 	FVector2D GetDrawSize(const FInv_GridFragment* GridFragment) const;

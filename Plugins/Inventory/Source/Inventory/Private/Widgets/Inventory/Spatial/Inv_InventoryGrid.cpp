@@ -30,6 +30,8 @@ void UInv_InventoryGrid::NativeOnInitialized()
 	InventoryComponent->OnItemAdded.AddDynamic(this, &ThisClass::AddItem);
 	InventoryComponent->OnStackChange.AddDynamic(this, &ThisClass::AddStacks);
 	InventoryComponent->OnInventoryMenuToggled.AddDynamic(this, &ThisClass::OnInventoryMenuToggled);
+	InventoryComponent->OnItemRemoved.AddDynamic(this, &ThisClass::HandleItemRemoved);
+	InventoryComponent->OnInvDelta.AddUObject(this, &ThisClass::HandleInvDelta);
 }
 
 void UInv_InventoryGrid::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
@@ -147,6 +149,88 @@ void UInv_InventoryGrid::UpdateTileParameters(const FVector2D& CanvasPosition, c
 	TileParameters.TileQuadrant = CalculateTileQuadrant(CanvasPosition, MousePosition);
 	
 	OnTileParametersUpdated(TileParameters);
+}
+
+void UInv_InventoryGrid::HandleInvDelta(FName ItemID, int32 DeltaQty, UObject* Context)
+{
+	if (ItemID.IsNone() || DeltaQty == 0) return;
+
+	// Only care about decreases here (quest turn-in, consume, etc.)
+	if (DeltaQty > 0) return;
+
+	// Find the item in THIS grid by ItemID
+	int32 FoundUpperLeft = INDEX_NONE;
+	UInv_InventoryItem* FoundItem = nullptr;
+
+	for (int32 i = 0; i < GridSlots.Num(); ++i)
+	{
+		UInv_GridSlot* GridSlot = GridSlots[i];
+		if (!IsValid(GridSlot)) continue;
+
+		UInv_InventoryItem* SlotItem = GridSlot->GetInventoryItem().Get();
+		if (!IsValid(SlotItem)) continue;
+		if (!MatchesCategory(SlotItem)) continue;
+
+		if (SlotItem->GetItemID() == ItemID)
+		{
+			FoundItem = SlotItem;
+			FoundUpperLeft = (GridSlot->GetUpperLeftIndex() != INDEX_NONE) ? GridSlot->GetUpperLeftIndex() : i;
+			break;
+		}
+	}
+
+	if (!IsValid(FoundItem) || !GridSlots.IsValidIndex(FoundUpperLeft)) return;
+
+	// Authoritative new count from inventory
+	int32 NewTotal = 0;
+	if (InventoryComponent.IsValid())
+	{
+		NewTotal = InventoryComponent.Get()->GetTotalQuantityByItemID(ItemID);
+	}
+	// else: no IC -> can't resolve totals safely, just bail
+	else
+	{
+		return;
+	}
+
+	// If item is gone -> clear UI (same as consume/drop when stack hits 0)
+	if (NewTotal <= 0)
+	{
+		RemoveItemFromGrid(FoundItem, FoundUpperLeft);
+		return;
+	}
+
+	// Otherwise update stack count UI for upper-left slot & widget
+	GridSlots[FoundUpperLeft]->SetStackCount(NewTotal);
+
+	if (TObjectPtr<UInv_SlottedItem>* Slotted = SlottedItems.Find(FoundUpperLeft))
+	{
+		if (IsValid(*Slotted))
+		{
+			(*Slotted)->UpdateStackCount(NewTotal);
+		}
+	}
+}
+
+void UInv_InventoryGrid::HandleItemRemoved(UInv_InventoryItem* Item)
+{
+	if (!IsValid(Item)) return;
+	if (!MatchesCategory(Item)) return;
+
+	// Find ANY slot that references this item, then remove by upper-left index
+	for (int32 i = 0; i < GridSlots.Num(); ++i)
+	{
+		if (!IsValid(GridSlots[i])) continue;
+
+		if (GridSlots[i]->GetInventoryItem().Get() == Item)
+		{
+			const int32 UpperLeft = GridSlots[i]->GetUpperLeftIndex();
+			const int32 RemoveIndex = (UpperLeft != INDEX_NONE) ? UpperLeft : i;
+
+			RemoveItemFromGrid(Item, RemoveIndex);
+			return;
+		}
+	}
 }
 
 void UInv_InventoryGrid::OnTileParametersUpdated(const FInv_TileParameters& Parameters)

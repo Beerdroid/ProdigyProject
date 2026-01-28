@@ -73,6 +73,7 @@ void FInv_ItemManifest::SpawnPickupActor(const UObject* WorldContextObject, FNam
 	ItemComp->InitItemManifest(*this);
 }
 
+
 void FInv_ItemManifest::ClearFragments()
 {
 	for (auto& Fragment : Fragments)
@@ -81,3 +82,4 @@ void FInv_ItemManifest::ClearFragments()
 	}
 	Fragments.Empty();
 }
+

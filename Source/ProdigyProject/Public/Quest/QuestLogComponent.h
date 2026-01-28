@@ -76,18 +76,17 @@ public:
 
 	void InitializeQuestProgress(FQuestRuntimeState& State, const FQuestDefinition& Def);
 	bool AreAllObjectivesComplete(const FQuestRuntimeState& State, const FQuestDefinition& Def) const;
-	void RecomputeCollectObjectives(FQuestRuntimeState& State, const FQuestDefinition& Def);
+	bool RecomputeCollectObjectives(FQuestRuntimeState& State, const FQuestDefinition& Def);
 	void ApplyKillProgress(FQuestRuntimeState& State, const FQuestDefinition& Def, const FGameplayTag& TargetTag, int32 Delta);
 	void TryCompleteQuest(FQuestRuntimeState& State, const FQuestDefinition& Def);
 	void GrantFinalRewards(const FQuestDefinition& Def);
 
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category="Quest|Items")
-	bool TryGetItemManifest(FName ItemID, FInv_ItemManifest& OutManifest) const;
+
 
 	UFUNCTION()
 	void HandleInventoryDelta(const FInventoryDelta& Delta);
 
-	void RecomputeCollectObjectives_SingleItem(FQuestRuntimeState& State, const FQuestDefinition& Def, FName ChangedItemID);
+	bool RecomputeCollectObjectives_SingleItem(FQuestRuntimeState& State, const FQuestDefinition& Def, FName ChangedItemID);
 
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category="Quest|UI")
 	TArray<FQuestLogEntryView> GetQuestLogEntries() const;
@@ -126,7 +125,7 @@ private:
 	const FQuestRuntimeState* FindQuestStateConst(FName QuestID) const;
 
 	int32 GetObjectiveProgress(const FQuestRuntimeState& State, FName ObjectiveID) const;
-	void SetObjectiveProgress(FQuestRuntimeState& State, FName ObjectiveID, int32 NewValue);
+	bool SetObjectiveProgress(FQuestRuntimeState& State, FName ObjectiveID, int32 NewValue);
 
 		// Convenience
 	AActor* GetOwnerActorChecked() const;

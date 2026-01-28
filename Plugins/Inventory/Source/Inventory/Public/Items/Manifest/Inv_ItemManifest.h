@@ -7,6 +7,23 @@
 
 #include "Inv_ItemManifest.generated.h"
 
+
+USTRUCT(BlueprintType)
+struct FInv_ItemView
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly) FText DisplayName;
+	UPROPERTY(BlueprintReadOnly) FText Description;
+	UPROPERTY(BlueprintReadOnly) TObjectPtr<UTexture2D> Icon = nullptr;
+
+	UPROPERTY(BlueprintReadOnly) bool bStackable = false;
+	UPROPERTY(BlueprintReadOnly) int32 MaxStack = 1;
+
+	UPROPERTY(BlueprintReadOnly) EInv_ItemCategory Category = EInv_ItemCategory::None;
+	UPROPERTY(BlueprintReadOnly) FGameplayTag ItemType;
+};
+
 /**
  * The Item Manifest contains all of the necessary data
  * for creating a new Inventory Item

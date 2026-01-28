@@ -7,6 +7,7 @@
 #include "Widgets/Inventory/InventoryBase/Inv_InventoryBase.h"
 #include "Net/UnrealNetwork.h"
 #include "Items/Inv_InventoryItem.h"
+#include "Items/Fragments/Inv_FragmentTags.h"
 #include "Items/Fragments/Inv_ItemFragment.h"
 
 
@@ -30,35 +31,134 @@ FName UInv_InventoryComponent::ResolveItemIDFromInventoryItem(const UInv_Invento
 	return Item ? Item->GetItemID() : NAME_None;
 }
 
-bool UInv_InventoryComponent::TryAddItemByManifest(FName ItemID, const FInv_ItemManifest& Manifest, int32 Quantity, int32& OutRemainder)
+int32 UInv_InventoryComponent::GetTotalQuantityByItemID(FName ItemID) const
 {
-	OutRemainder = Quantity;
+	return InventoryList.GetTotalQuantityByItemID(ItemID);
+}
 
-	if (ItemID.IsNone() || Quantity <= 0) return false;
+FInv_ItemView UInv_InventoryComponent::BuildItemViewFromManifest(const FInv_ItemManifest& Manifest) const
+{
+	FInv_ItemView View;
+	View.Category = Manifest.GetItemCategory();
+	View.ItemType  = Manifest.GetItemType();
 
-	FInv_SlotAvailabilityResult Result = InventoryMenu->HasRoomForItem(Manifest, Quantity);
-	UInv_InventoryItem* FoundItem = InventoryList.FindFirstItemByID(ItemID);
-	Result.Item = FoundItem;
-
-	if (Result.TotalRoomToFill == 0)
+	// DisplayName
+	if (const FInv_TextFragment* NameFrag =
+		Manifest.GetFragmentOfTypeWithTag<FInv_TextFragment>(FragmentTags::ItemNameFragment))
 	{
-		NoRoomInInventory.Broadcast();
-		return false;
+		View.DisplayName = NameFrag->GetText();
 	}
 
-	OutRemainder = Result.Remainder;
-
-	if (Result.Item.IsValid() && Result.bStackable)
+	// Description (use FlavorTextFragment, NOT FragmentTags.UI.Description)
+	if (const FInv_TextFragment* DescFrag =
+		Manifest.GetFragmentOfTypeWithTag<FInv_TextFragment>(FragmentTags::FlavorTextFragment))
 	{
-		OnStackChange.Broadcast(Result);
-		Server_AddStacksToItemFromManifest(ItemID, Manifest.GetItemType(), Result.TotalRoomToFill);
+		View.Description = DescFrag->GetText();
+	}
+
+	// Icon
+	if (const FInv_ImageFragment* IconFrag =
+		Manifest.GetFragmentOfTypeWithTag<FInv_ImageFragment>(FragmentTags::IconFragment))
+	{
+		View.Icon = IconFrag->GetIcon();
+	}
+
+	// Stackable
+	if (const FInv_StackableFragment* StackFrag =
+		Manifest.GetFragmentOfTypeWithTag<FInv_StackableFragment>(FragmentTags::StackableFragment))
+	{
+		View.bStackable = true;
+		View.MaxStack   = StackFrag->GetMaxStackSize();
 	}
 	else
 	{
-		Server_AddNewItemFromManifest(ItemID, Manifest, Result.bStackable ? Result.TotalRoomToFill : 0);
+		View.bStackable = false;
+		View.MaxStack   = 1;
 	}
 
-	return (Result.TotalRoomToFill > 0);
+	return View;
+}
+
+
+bool UInv_InventoryComponent::TryAddItemByManifest(FName ItemID, const FInv_ItemManifest& Manifest, int32 Quantity, int32& OutRemainder)
+{
+	UE_LOG(LogTemp, Warning, TEXT("TryAddItemByManifest: Owner=%s Auth=%d MenuValid=%d Item=%s Qty=%d"),
+	*GetNameSafe(GetOwner()),
+	GetOwner() ? (int32)GetOwner()->HasAuthority() : -1,
+	(int32)IsValid(InventoryMenu),
+	*ItemID.ToString(),
+	Quantity);
+
+		
+	OutRemainder = Quantity;
+	if (ItemID.IsNone() || Quantity <= 0) return false;
+
+	// If we have UI, use your existing capacity logic
+	if (IsValid(InventoryMenu))
+	{
+		FInv_SlotAvailabilityResult Result = InventoryMenu->HasRoomForItem(Manifest, Quantity);
+		UInv_InventoryItem* FoundItem = InventoryList.FindFirstItemByID(ItemID);
+		Result.Item = FoundItem;
+
+		if (Result.TotalRoomToFill == 0)
+		{
+		UE_LOG(LogTemp, Warning, TEXT("TryAddItemByManifest: NO ROOM (TotalRoomToFill=0) for %s"), *ItemID.ToString());
+			
+			NoRoomInInventory.Broadcast();
+			return false;
+		}
+
+
+		OutRemainder = Result.Remainder;
+
+		if (Result.Item.IsValid() && Result.bStackable)
+		{
+			OnStackChange.Broadcast(Result);
+			Server_AddStacksToItemFromManifest(ItemID, Manifest.GetItemType(), Result.TotalRoomToFill);
+		}
+		else
+		{
+			Server_AddNewItemFromManifest(ItemID, Manifest, Result.bStackable ? Result.TotalRoomToFill : 0);
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("TryAddItemByManifest UIResult: TotalRoomToFill=%d Remainder=%d bStackable=%d FoundItem=%s"),
+	Result.TotalRoomToFill,
+	Result.Remainder,
+	(int32)Result.bStackable,
+	*GetNameSafe(Result.Item.Get()));
+
+		return (Result.TotalRoomToFill > 0);
+	}
+
+	// ---- Server-safe fallback (no UI) ----
+	// For quests/rewards: just add all. (Capacity rules must be moved out of UI later if you need them.)
+	const bool bStackable =
+		Manifest.GetFragmentOfTypeWithTag<FInv_StackableFragment>(FragmentTags::StackableFragment) != nullptr;
+
+	OutRemainder = 0;
+
+	if (bStackable)
+	{
+		// Put whole quantity into your single “total stack count” model
+		if (UInv_InventoryItem* Existing = InventoryList.FindFirstItemByID(ItemID))
+		{
+			Server_AddStacksToItemFromManifest(ItemID, Manifest.GetItemType(), Quantity);
+		}
+		else
+		{
+			Server_AddNewItemFromManifest(ItemID, Manifest, Quantity);
+		}
+	}
+	else
+	{
+		// Non-stackable: add Quantity separate entries
+		for (int32 i = 0; i < Quantity; ++i)
+		{
+			Server_AddNewItemFromManifest(ItemID, Manifest, 1);
+		}
+	}
+
+	return true;
 }
 
 void UInv_InventoryComponent::Server_AddNewItemFromManifest_Implementation(FName ItemID, FInv_ItemManifest Manifest, int32 StackCount)
@@ -121,6 +221,69 @@ void UInv_InventoryComponent::TryAddItem(UInv_ItemComponent* ItemComponent)
 	{
 		// This item type doesn't exist in the inventory. Create a new one and update all pertinent slots.
 		Server_AddNewItem(ItemComponent, Result.bStackable ? Result.TotalRoomToFill : 0, Result.Remainder);
+	}
+}
+
+void UInv_InventoryComponent::Server_RemoveItemByID_Implementation(FName ItemID, int32 Quantity, UObject* Context)
+{
+	if (ItemID.IsNone() || Quantity <= 0) return;
+	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
+
+	const bool bLocalServerUI =
+		(GetOwner()->GetNetMode() == NM_ListenServer || GetOwner()->GetNetMode() == NM_Standalone);
+
+	int32 Remaining = Quantity;
+	int32 RemovedTotal = 0;
+
+	while (Remaining > 0)
+	{
+		UInv_InventoryItem* Item = InventoryList.FindFirstItemByID(ItemID);
+		if (!IsValid(Item))
+		{
+			break;
+		}
+
+		const int32 CurrentStack = Item->GetTotalStackCount();
+		if (CurrentStack <= 0)
+		{
+			// Broken entry, remove it.
+			if (bLocalServerUI)
+			{
+				OnItemRemoved.Broadcast(Item);
+			}
+
+			InventoryList.RemoveEntry(Item);
+			continue;
+		}
+
+		const int32 Take = FMath::Min(CurrentStack, Remaining);
+		const int32 NewStack = CurrentStack - Take;
+
+		if (NewStack <= 0)
+		{
+			// IMPORTANT: notify local UI before removing (listen/standalone won't get PreReplicatedRemove)
+			if (bLocalServerUI)
+			{
+				OnItemRemoved.Broadcast(Item);
+			}
+
+			InventoryList.RemoveEntry(Item);
+		}
+		else
+		{
+			Item->SetTotalStackCount(NewStack);
+
+			// If your stack count is NOT replicated via the item subobject, you may also need a “stack changed”
+			// notification here. But often UI reads directly from the item and updates automatically on listen server.
+		}
+
+		Remaining -= Take;
+		RemovedTotal += Take;
+	}
+
+	if (RemovedTotal > 0)
+	{
+		EmitInvDeltaByItemID(ItemID, -RemovedTotal, Context);
 	}
 }
 

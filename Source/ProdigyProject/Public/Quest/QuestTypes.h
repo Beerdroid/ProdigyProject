@@ -14,9 +14,6 @@ enum class EQuestObjectiveType : uint8
 	Interact
 };
 
-
-
-
 USTRUCT(BlueprintType)
 struct FInventoryDelta
 {

@@ -50,5 +50,10 @@ void UInv_ItemComponent::SetItemID(FName InItemID)
 void UInv_ItemComponent::PickedUp()
 {
 	OnPickedUp();
-	GetOwner()->Destroy();
+
+	AActor* OwnerActor = GetOwner();
+	if (IsValid(OwnerActor))
+	{
+		OwnerActor->Destroy();
+	}
 }

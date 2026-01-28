@@ -8,6 +8,7 @@
 #include "Quest/Interfaces/QuestKillEventSource.h"
 #include "QuestIntegrationComponent.generated.h"
 
+class UInv_InventoryComponent;
 // Dynamic delegate for Blueprints/UI
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnQuestKillTagBP, FGameplayTag, TargetTag);
 
@@ -32,7 +33,7 @@ public:
 	// ---- IQuestInventoryProvider ----
 	virtual int32 GetTotalQuantityByItemID_Implementation(FName ItemID) const override;
 	virtual bool AddItemByID_Implementation(FName ItemID, int32 Quantity, UObject* Context) override;
-	virtual int32 RemoveItemByID_Implementation(FName ItemID, int32 Quantity,  UObject* Context) override;
+	virtual void RemoveItemByID_Implementation(FName ItemID, int32 Quantity,  UObject* Context) override;
 
 	virtual FOnQuestInventoryDelta& GetInventoryDeltaDelegate() override { return OnQuestInventoryDelta; }
 
@@ -61,22 +62,15 @@ public:
 		OnQuestKillTagNative.Broadcast(TargetTag); // Quest system
 		OnQuestKillTagBP.Broadcast(TargetTag);     // Blueprint/UI
 	}
+	
+	virtual bool GetItemViewByID_Implementation(FName ItemID, FInv_ItemView& OutView) const override;
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="Quest|Items")
+	bool TryGetItemManifest(FName ItemID, FInv_ItemManifest& OutManifest) const;
 
 protected:
-	void BroadcastInventoryDelta(FName ItemID, int32 DeltaQty, UObject* Context);
+	UPROPERTY()
+	TObjectPtr<UInv_InventoryComponent> InventoryComp = nullptr;
 	
-	UFUNCTION(BlueprintImplementableEvent, Category="Quest|Integration")
-	int32 BP_GetTotalQuantityByItemID(FName ItemID) const;
-
-	UFUNCTION(BlueprintImplementableEvent, Category="Quest|Integration")
-	bool BP_AddItemByID(FName ItemID, int32 Quantity, UObject* Context);
-
-	UFUNCTION(BlueprintImplementableEvent, Category="Quest|Integration")
-	int32 BP_RemoveItemByID(FName ItemID, int32 Quantity, UObject* Context);
-
-	UFUNCTION(BlueprintImplementableEvent, Category="Quest|Integration")
-	void BP_AddCurrency(int32 Amount);
-
-	UFUNCTION(BlueprintImplementableEvent, Category="Quest|Integration")
-	void BP_AddXP(int32 Amount);
+	void BroadcastInventoryDelta(FName ItemID, int32 DeltaQty, UObject* Context);
 };

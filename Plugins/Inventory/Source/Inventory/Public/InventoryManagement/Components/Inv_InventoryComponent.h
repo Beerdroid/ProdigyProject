@@ -49,6 +49,10 @@ public:
 	UFUNCTION(Server, Reliable)
 	void Server_DropItem(UInv_InventoryItem* Item, int32 StackCount);
 
+	
+	UFUNCTION(Server, Reliable)
+	void Server_RemoveItemByID(FName ItemID, int32 Quantity, UObject* Context);
+
 	UFUNCTION(Server, Reliable)
 	void Server_ConsumeItem(UInv_InventoryItem* Item);
 
@@ -70,6 +74,12 @@ public:
 	FName ResolveItemIDFromItemComponent(const UInv_ItemComponent* ItemComponent) const;
 	FName ResolveItemIDFromInventoryItem(const UInv_InventoryItem* Item) const;
 
+	UFUNCTION(BlueprintCallable, Category="Inventory")
+	int32 GetTotalQuantityByItemID(FName ItemID) const;
+
+	UFUNCTION(BlueprintPure, Category="Inventory|UI")
+	FInv_ItemView BuildItemViewFromManifest(const FInv_ItemManifest& Manifest) const;
+
 	FInventoryItemChange OnItemAdded;
 	FInventoryItemChange OnItemRemoved;
 	FNoRoomInInventory NoRoomInInventory;
@@ -78,6 +88,8 @@ public:
 	FItemEquipStatusChanged OnItemUnequipped;
 	FInventoryMenuToggled OnInventoryMenuToggled;
 	FOnInvDeltaNative OnInvDelta;
+
+	
 protected:
 	virtual void BeginPlay() override;
 
