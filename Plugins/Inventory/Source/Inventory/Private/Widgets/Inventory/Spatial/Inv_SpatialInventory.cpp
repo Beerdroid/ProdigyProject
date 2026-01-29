@@ -16,6 +16,7 @@
 #include "Widgets/ItemDescription/Inv_ItemDescription.h"
 #include "Blueprint/WidgetTree.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
+#include "Items/Components/Inv_ItemComponent.h"
 #include "Items/Fragments/Inv_ItemFragment.h"
 #include "Widgets/Inventory/GridSlots/Inv_EquippedGridSlot.h"
 #include "Widgets/Inventory/HoverItem/Inv_HoverItem.h"
@@ -220,6 +221,10 @@ void UInv_SpatialInventory::BroadcastSlotClickedDelegates(UInv_InventoryItem* It
 
 FInv_SlotAvailabilityResult UInv_SpatialInventory::HasRoomForItem(UInv_ItemComponent* ItemComponent) const
 {
+	UE_LOG(LogTemp, Warning, TEXT("HasRoomForItem(Component) Cat=%d ItemID=%s"),
+	(int32)UInv_InventoryStatics::GetItemCategoryFromItemComp(ItemComponent),
+	*ItemComponent->GetItemID().ToString());
+	
 	switch (UInv_InventoryStatics::GetItemCategoryFromItemComp(ItemComponent))
 	{
 		case EInv_ItemCategory::Equippable:
@@ -231,6 +236,36 @@ FInv_SlotAvailabilityResult UInv_SpatialInventory::HasRoomForItem(UInv_ItemCompo
 		default:
 			UE_LOG(LogInventory, Error, TEXT("ItemComponent doesn't have a valid Item Category."))
 			return FInv_SlotAvailabilityResult();
+	}
+}
+
+FInv_SlotAvailabilityResult UInv_SpatialInventory::HasRoomForItem(FName ItemID, const FInv_ItemManifest& Manifest,
+	int32 Quantity) const
+{
+	UE_LOG(LogTemp, Warning, TEXT("HasRoomForItem(Manifest) Cat=%d ItemID=%s Qty=%d"),
+	(int32)Manifest.GetItemCategory(),
+	*ItemID.ToString(),
+	Quantity);
+	
+	if (ItemID.IsNone() || Quantity <= 0)
+	{
+		return FInv_SlotAvailabilityResult();
+	}
+
+	switch (Manifest.GetItemCategory())
+	{
+	case EInv_ItemCategory::Equippable:
+		return Grid_Equippables ? Grid_Equippables->HasRoomForItem(ItemID, Manifest, Quantity) : FInv_SlotAvailabilityResult();
+
+	case EInv_ItemCategory::Consumable:
+		return Grid_Consumables ? Grid_Consumables->HasRoomForItem(ItemID, Manifest, Quantity) : FInv_SlotAvailabilityResult();
+
+	case EInv_ItemCategory::Craftable:
+		return Grid_Craftables ? Grid_Craftables->HasRoomForItem(ItemID, Manifest, Quantity) : FInv_SlotAvailabilityResult();
+
+	default:
+		UE_LOG(LogInventory, Error, TEXT("Manifest doesn't have a valid Item Category (ItemID=%s)"), *ItemID.ToString());
+		return FInv_SlotAvailabilityResult();
 	}
 }
 

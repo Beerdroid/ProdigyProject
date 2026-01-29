@@ -27,6 +27,9 @@ public:
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 	virtual FInv_SlotAvailabilityResult HasRoomForItem(UInv_ItemComponent* ItemComponent) const override;
+	
+	FInv_SlotAvailabilityResult HasRoomForItem(FName ItemID, const FInv_ItemManifest& Manifest, int32 Quantity) const;
+
 	virtual void OnItemHovered(UInv_InventoryItem* Item) override;
 	virtual void OnItemUnHovered() override;
 	virtual bool HasHoverItem() const override;

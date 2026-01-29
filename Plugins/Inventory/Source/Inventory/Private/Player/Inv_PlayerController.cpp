@@ -61,8 +61,14 @@ void AInv_PlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
 
+	UE_LOG(LogTemp, Warning, TEXT("SetupInputComponent called on %s (Class=%s)"),
+		*GetNameSafe(this), *GetClass()->GetName());
+
 	UEnhancedInputComponent* EnhancedInputComponent =
 		CastChecked<UEnhancedInputComponent>(InputComponent);
+
+	UE_LOG(LogTemp, Warning, TEXT("Binding PrimaryInteractAction=%s"),
+		*GetNameSafe(PrimaryInteractAction));
 
 	EnhancedInputComponent->BindAction(
 		PrimaryInteractAction, ETriggerEvent::Started, this, &AInv_PlayerController::PrimaryInteract);
@@ -101,21 +107,27 @@ void AInv_PlayerController::ToggleInventory()
 
 void AInv_PlayerController::PrimaryInteract()
 {
-	if (!ThisActor.IsValid()) return;
+	TryPrimaryPickup(ThisActor.Get());
+}
 
-	UInv_ItemComponent* ItemComp = ThisActor->FindComponentByClass<UInv_ItemComponent>();
-	if (!IsValid(ItemComp) || !InventoryComponent.IsValid()) return;
+bool AInv_PlayerController::TryPrimaryPickup(AActor* TargetActor)
+{
+	if (!IsValid(TargetActor)) return false;
+
+	UInv_ItemComponent* ItemComp = TargetActor->FindComponentByClass<UInv_ItemComponent>();
+	if (!IsValid(ItemComp) || !InventoryComponent.IsValid()) return false;
 
 	APawn* P = GetPawn();
-	if (!IsValid(P)) return;
+	if (!IsValid(P)) return false;
 
-	if (!IsWithinPickupDistance(ThisActor.Get()))
+	if (!IsWithinPickupDistance(TargetActor))
 	{
-		StartMoveToPickup(ThisActor.Get(), ItemComp);
-		return;
+		StartMoveToPickup(TargetActor, ItemComp);
+		return true;
 	}
 
 	InventoryComponent->TryAddItem(ItemComp);
+	return true;
 }
 
 void AInv_PlayerController::CreateHUDWidget()
@@ -186,15 +198,35 @@ void AInv_PlayerController::TraceUnderMouseForItem()
 {
 	if (!IsLocalController()) return;
 
-	FHitResult HitResult;
-	const bool bHit = GetHitResultUnderCursorByChannel(
+	LastActor = ThisActor;
+	ThisActor = nullptr;
+
+	FHitResult Hit;
+
+	// 1) Try pickup items first (your current behavior)
+	const bool bHitItem = GetHitResultUnderCursorByChannel(
 		UEngineTypes::ConvertToTraceType(ItemTraceChannel),
 		/*bTraceComplex*/ false,
-		HitResult
+		Hit
 	);
 
-	LastActor = ThisActor;
-	ThisActor = bHit ? HitResult.GetActor() : nullptr;
+	AActor* NewActor = bHitItem ? Hit.GetActor() : nullptr;
+
+	// If the hit is not an item, fallback to interactables
+	if (!IsValid(NewActor) || !IsValid(NewActor->FindComponentByClass<UInv_ItemComponent>()))
+	{
+		FHitResult HitInteract;
+
+		const bool bHitInteract = GetHitResultUnderCursorByChannel(
+			UEngineTypes::ConvertToTraceType(InteractTraceChannel),
+			/*bTraceComplex*/ false,
+			HitInteract
+		);
+
+		NewActor = bHitInteract ? HitInteract.GetActor() : nullptr;
+	}
+
+	ThisActor = NewActor;
 
 	// Clear HUD if no hit
 	if (!ThisActor.IsValid())
@@ -226,13 +258,15 @@ void AInv_PlayerController::TraceUnderMouseForItem()
 			IInv_Highlightable::Execute_Highlight(Highlightable);
 		}
 
-		UInv_ItemComponent* ItemComponent = ThisActor->FindComponentByClass<UInv_ItemComponent>();
-		if (IsValid(ItemComponent))
+		// Item message
+		if (UInv_ItemComponent* ItemComponent = ThisActor->FindComponentByClass<UInv_ItemComponent>())
 		{
 			if (IsValid(HUDWidget)) HUDWidget->ShowPickupMessage(ItemComponent->GetPickupMessage());
 		}
 		else
 		{
+			// Optional: show generic interact prompt if target supports interaction
+			// (You can add a better UI message later.)
 			if (IsValid(HUDWidget)) HUDWidget->HidePickupMessage();
 		}
 	}
@@ -243,42 +277,6 @@ void AInv_PlayerController::ClearPendingPickup()
 	GetWorldTimerManager().ClearTimer(PendingPickupTimerHandle);
 	PendingPickupActor = nullptr;
 	PendingPickupItemComp = nullptr;
-}
-
-bool AInv_PlayerController::TryPickupItemUnderMouse_Refresh()
-{
-	if (!IsLocalController()) return false;
-	if (!InventoryComponent.IsValid()) return false;
-
-	ClearPendingPickup();
-
-	FHitResult HitResult;
-	const bool bHit = GetHitResultUnderCursorByChannel(
-		UEngineTypes::ConvertToTraceType(ItemTraceChannel),
-		/*bTraceComplex*/ false,
-		HitResult
-	);
-
-	if (!bHit) return false;
-
-	AActor* HitActor = HitResult.GetActor();
-	if (!IsValid(HitActor)) return false;
-
-	UInv_ItemComponent* ItemComp = HitActor->FindComponentByClass<UInv_ItemComponent>();
-	if (!IsValid(ItemComp)) return false;
-
-	APawn* P = GetPawn();
-	if (!IsValid(P)) return false;
-
-	if (IsWithinPickupDistance(HitActor))
-	{
-		InventoryComponent->TryAddItem(ItemComp);
-		return true;
-	}
-
-	// Out of range: move to item and pickup on arrival
-	StartMoveToPickup(HitActor, ItemComp);
-	return true;
 }
 
 void AInv_PlayerController::StartMoveToPickup(AActor* TargetActor, UInv_ItemComponent* ItemComp)
@@ -330,21 +328,12 @@ void AInv_PlayerController::TickPendingPickup()
 
 void AInv_PlayerController::OnSetDestinationStarted()
 {
-	// Pickup-first: if click was on item, handle pickup or move-to-pickup and block normal movement click
-	bBlockMoveThisClick = TryPickupItemUnderMouse_Refresh();
-	if (bBlockMoveThisClick)
-	{
-		// IMPORTANT:
-		// If we started "move-to-pickup", do NOT StopMovement(), or you'll cancel SimpleMoveToLocation.
-		// Only stop movement when we actually picked up immediately (no pending target).
-		if (!PendingPickupActor.IsValid())
-		{
-			StopMovement();
-		}
+	// LMB is movement-only. Do NOT attempt pickup here.
+	bBlockMoveThisClick = false;
 
-		TraceUnderMouseForItem();
-		return;
-	}
+	// Cancel any pending pickup started by RMB if you want LMB to override intent
+	// (optional, but usually desired)
+	ClearPendingPickup();
 
 	StopMovement();
 

@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "InventoryManagement/FastArray/Inv_FastArray.h"
+#include "Items/Manifest/Inv_ItemManifest.h"
 #include "Inv_InventoryComponent.generated.h"
 
 class UInv_ItemComponent;
@@ -16,6 +17,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FNoRoomInInventory);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FStackChange, const FInv_SlotAvailabilityResult&, Result);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FItemEquipStatusChanged, UInv_InventoryItem*, Item);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInventoryMenuToggled, bool, bOpen);
+DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnInvDeltaNative, FName /*ItemID*/, int32 /*DeltaQty*/, UObject* /*Context*/);
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent), Blueprintable)
 class INVENTORY_API UInv_InventoryComponent : public UActorComponent
@@ -25,6 +27,15 @@ class INVENTORY_API UInv_InventoryComponent : public UActorComponent
 public:
 	UInv_InventoryComponent();
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Inventory")
+	bool TryAddItemByManifest(FName ItemID, const FInv_ItemManifest& Manifest, int32 Quantity, int32& OutRemainder);
+
+	UFUNCTION(Server, Reliable)
+	void Server_AddNewItemFromManifest(FName ItemID, FInv_ItemManifest Manifest, int32 StackCount);
+
+	UFUNCTION(Server, Reliable)
+	void Server_AddStacksToItemFromManifest(FName ItemID, FGameplayTag ItemType, int32 StackCount);
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Inventory")
 	void TryAddItem(UInv_ItemComponent* ItemComponent);
@@ -37,6 +48,10 @@ public:
 
 	UFUNCTION(Server, Reliable)
 	void Server_DropItem(UInv_InventoryItem* Item, int32 StackCount);
+
+	
+	UFUNCTION(Server, Reliable)
+	void Server_RemoveItemByID(FName ItemID, int32 Quantity, UObject* Context);
 
 	UFUNCTION(Server, Reliable)
 	void Server_ConsumeItem(UInv_InventoryItem* Item);
@@ -53,6 +68,18 @@ public:
 	UInv_InventoryBase* GetInventoryMenu() const { return InventoryMenu; }
 	bool IsMenuOpen() const { return bInventoryMenuOpen; }
 
+	void SetItemID(FName InItemID);
+	void EmitInvDeltaByItemID(FName ItemID, int32 DeltaQty, UObject* Context);
+	FName ResolveItemIDFromManifest(const FInv_ItemManifest& Manifest) const;
+	FName ResolveItemIDFromItemComponent(const UInv_ItemComponent* ItemComponent) const;
+	FName ResolveItemIDFromInventoryItem(const UInv_InventoryItem* Item) const;
+
+	UFUNCTION(BlueprintCallable, Category="Inventory")
+	int32 GetTotalQuantityByItemID(FName ItemID) const;
+
+	UFUNCTION(BlueprintPure, Category="Inventory|UI")
+	FInv_ItemView BuildItemViewFromManifest(const FInv_ItemManifest& Manifest) const;
+
 	FInventoryItemChange OnItemAdded;
 	FInventoryItemChange OnItemRemoved;
 	FNoRoomInInventory NoRoomInInventory;
@@ -60,6 +87,9 @@ public:
 	FItemEquipStatusChanged OnItemEquipped;
 	FItemEquipStatusChanged OnItemUnequipped;
 	FInventoryMenuToggled OnInventoryMenuToggled;
+	FOnInvDeltaNative OnInvDelta;
+
+	
 protected:
 	virtual void BeginPlay() override;
 

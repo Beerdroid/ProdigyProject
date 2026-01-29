@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "Items/Manifest/Inv_ItemManifest.h"
 #include "Types/Inv_GridTypes.h"
 #include "Inv_InventoryBase.generated.h"
 
@@ -17,6 +18,13 @@ class INVENTORY_API UInv_InventoryBase : public UUserWidget
 	GENERATED_BODY()
 public:
 	virtual FInv_SlotAvailabilityResult HasRoomForItem(UInv_ItemComponent* ItemComponent) const { return FInv_SlotAvailabilityResult(); }
+	
+	// (quest / manifest / non-world flow)
+	virtual FInv_SlotAvailabilityResult HasRoomForItem(const FInv_ItemManifest& Manifest, int32 Quantity) const
+	{
+		return FInv_SlotAvailabilityResult();
+	}
+	
 	virtual void OnItemHovered(UInv_InventoryItem* Item) {}
 	virtual void OnItemUnHovered() {}
 	virtual bool HasHoverItem() const { return false; }

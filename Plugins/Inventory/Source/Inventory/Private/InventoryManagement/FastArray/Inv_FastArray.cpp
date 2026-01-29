@@ -39,6 +39,33 @@ void FInv_InventoryFastArray::PostReplicatedAdd(const TArrayView<int32> AddedInd
 	}
 }
 
+UInv_InventoryItem* FInv_InventoryFastArray::AddEntryFromManifest(const FInv_ItemManifest& Manifest)
+{
+	check(OwnerComponent);
+	AActor* OwningActor = OwnerComponent->GetOwner();
+	check(OwningActor);
+	check(OwningActor->HasAuthority());
+
+	UInv_InventoryComponent* IC = Cast<UInv_InventoryComponent>(OwnerComponent);
+	if (!IsValid(IC)) return nullptr;
+
+	FInv_InventoryEntry& NewEntry = Entries.AddDefaulted_GetRef();
+
+	// Create inventory item subobject from manifest
+	NewEntry.Item = Manifest.ManifestCopy(OwningActor);
+	if (!IsValid(NewEntry.Item))
+	{
+		// remove the defaulted entry we just added
+		Entries.Pop(EAllowShrinking::No);
+		return nullptr;
+	}
+
+	IC->AddRepSubObj(NewEntry.Item);
+	MarkItemDirty(NewEntry);
+
+	return NewEntry.Item;
+}
+
 UInv_InventoryItem* FInv_InventoryFastArray::AddEntry(UInv_ItemComponent* ItemComponent)
 {
 	check(OwnerComponent);
@@ -90,3 +117,35 @@ UInv_InventoryItem* FInv_InventoryFastArray::FindFirstItemByType(const FGameplay
 	});
 	return FoundItem ? FoundItem->Item : nullptr;
 }
+
+UInv_InventoryItem* FInv_InventoryFastArray::FindFirstItemByID(FName ItemID)
+{
+	for (auto& Entry : Entries)
+	{
+		if (UInv_InventoryItem* Item = Entry.Item.Get())
+		{
+			if (Item->GetItemID() == ItemID)
+			{
+				return Item;
+			}
+		}
+	}
+	return nullptr;
+}
+
+int32 FInv_InventoryFastArray::GetTotalQuantityByItemID(FName ItemID) const
+{
+	if (ItemID.IsNone()) return 0;
+
+	int32 Total = 0;
+	for (const FInv_InventoryEntry& E : Entries)
+	{
+		const UInv_InventoryItem* Item = E.Item;
+		if (IsValid(Item) && Item->GetItemID() == ItemID)
+		{
+			Total += FMath::Max(0, Item->GetTotalStackCount());
+		}
+	}
+	return Total;
+}
+

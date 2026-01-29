@@ -18,6 +18,8 @@ public:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	void InitItemManifest(FInv_ItemManifest CopyOfManifest);
+	FName GetItemID() const { return ItemID; }
+	void SetItemID(FName InItemID);
 	FInv_ItemManifest GetItemManifest() const { return ItemManifest; }
 	FInv_ItemManifest& GetItemManifestMutable() { return ItemManifest; }
 	FString GetPickupMessage() const { return PickupMessage; }
@@ -29,6 +31,9 @@ protected:
 
 private:
 
+	UPROPERTY(Replicated, EditAnywhere, Category="Inventory")
+	FName ItemID = NAME_None;
+	
 	UPROPERTY(Replicated, EditAnywhere, Category = "Inventory")
 	FInv_ItemManifest ItemManifest;
 

@@ -7,6 +7,23 @@
 
 #include "Inv_ItemManifest.generated.h"
 
+
+USTRUCT(BlueprintType)
+struct FInv_ItemView
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly) FText DisplayName;
+	UPROPERTY(BlueprintReadOnly) FText Description;
+	UPROPERTY(BlueprintReadOnly) TObjectPtr<UTexture2D> Icon = nullptr;
+
+	UPROPERTY(BlueprintReadOnly) bool bStackable = false;
+	UPROPERTY(BlueprintReadOnly) int32 MaxStack = 1;
+
+	UPROPERTY(BlueprintReadOnly) EInv_ItemCategory Category = EInv_ItemCategory::None;
+	UPROPERTY(BlueprintReadOnly) FGameplayTag ItemType;
+};
+
 /**
  * The Item Manifest contains all of the necessary data
  * for creating a new Inventory Item
@@ -23,6 +40,7 @@ struct INVENTORY_API FInv_ItemManifest
 
 	TArray<TInstancedStruct<FInv_ItemFragment>>& GetFragmentsMutable() { return Fragments; }
 	UInv_InventoryItem* Manifest(UObject* NewOuter);
+	UInv_InventoryItem* ManifestCopy(UObject* NewOuter) const;
 	EInv_ItemCategory GetItemCategory() const { return ItemCategory; }
 	FGameplayTag GetItemType() const { return ItemType; }
 	void AssimilateInventoryFragments(UInv_CompositeBase* Composite) const;
@@ -39,7 +57,7 @@ struct INVENTORY_API FInv_ItemManifest
 	template<typename T> requires std::derived_from<T, FInv_ItemFragment>
 	TArray<const T*> GetAllFragmentsOfType() const;
 
-	void SpawnPickupActor(const UObject* WorldContextObject, const FVector& SpawnLocation, const FRotator& SpawnRotation);
+	void SpawnPickupActor(const UObject* WorldContextObject, FName ItemID, const FVector& SpawnLocation, const FRotator& SpawnRotation);
 
 private:
 

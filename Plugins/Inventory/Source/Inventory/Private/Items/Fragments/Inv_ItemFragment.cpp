@@ -74,6 +74,7 @@ void FInv_ConsumableFragment::OnConsume(APlayerController* PC)
 {
 	for (auto& Modifier : ConsumeModifiers)
 	{
+		if (!Modifier.IsValid()) continue;
 		auto& ModRef = Modifier.GetMutable();
 		ModRef.OnConsume(PC);
 	}
@@ -84,6 +85,7 @@ void FInv_ConsumableFragment::Assimilate(UInv_CompositeBase* Composite) const
 	FInv_InventoryItemFragment::Assimilate(Composite);
 	for (const auto& Modifier : ConsumeModifiers)
 	{
+		if (!Modifier.IsValid()) continue;
 		const auto& ModRef = Modifier.Get();
 		ModRef.Assimilate(Composite);
 	}
@@ -94,6 +96,7 @@ void FInv_ConsumableFragment::Manifest()
 	FInv_InventoryItemFragment::Manifest();
 	for (auto& Modifier : ConsumeModifiers)
 	{
+		if (!Modifier.IsValid()) continue;
 		auto& ModRef = Modifier.GetMutable();
 		ModRef.Manifest();
 	}
@@ -191,6 +194,7 @@ void FInv_EquipmentFragment::OnEquip(APlayerController* PC)
 	bEquipped = true;
 	for (auto& Modifier : EquipModifiers)
 	{
+		if (!Modifier.IsValid()) continue;
 		auto& ModRef = Modifier.GetMutable();
 		ModRef.OnEquip(PC);
 	}
@@ -202,6 +206,7 @@ void FInv_EquipmentFragment::OnUnequip(APlayerController* PC)
 	bEquipped = false;
 	for (auto& Modifier : EquipModifiers)
 	{
+		if (!Modifier.IsValid()) continue;
 		auto& ModRef = Modifier.GetMutable();
 		ModRef.OnUnequip(PC);
 	}
@@ -212,6 +217,7 @@ void FInv_EquipmentFragment::Assimilate(UInv_CompositeBase* Composite) const
 	FInv_InventoryItemFragment::Assimilate(Composite);
 	for (const auto& Modifier : EquipModifiers)
 	{
+		if (!Modifier.IsValid()) continue;
 		const auto& ModRef = Modifier.Get();
 		ModRef.Assimilate(Composite);
 	}
@@ -222,6 +228,7 @@ void FInv_EquipmentFragment::Manifest()
 	FInv_InventoryItemFragment::Manifest();
 	for (auto& Modifier : EquipModifiers)
 	{
+		if (!Modifier.IsValid()) continue;
 		auto& ModRef = Modifier.GetMutable();
 		ModRef.Manifest();
 	}
