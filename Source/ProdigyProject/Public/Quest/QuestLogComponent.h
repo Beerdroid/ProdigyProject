@@ -74,6 +74,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Quest")
 	void NotifyKillObjectiveTag(FGameplayTag TargetTag);
 
+	UFUNCTION(BlueprintPure, Category="Quest|Query")
+	bool IsQuestAccepted(FName QuestID) const;
+
+	UFUNCTION(BlueprintPure, Category="Quest|Query")
+	bool IsQuestCompleted(FName QuestID) const;
+
+	UFUNCTION(BlueprintPure, Category="Quest|Query")
+	bool IsQuestTurnedIn(FName QuestID) const;
+
 	void InitializeQuestProgress(FQuestRuntimeState& State, const FQuestDefinition& Def);
 	bool AreAllObjectivesComplete(const FQuestRuntimeState& State, const FQuestDefinition& Def) const;
 	bool RecomputeCollectObjectives(FQuestRuntimeState& State, const FQuestDefinition& Def);
