@@ -56,6 +56,9 @@ struct FQuestObjectiveDef
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	EQuestObjectiveType Type = EQuestObjectiveType::Collect;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	FName Description = NAME_None;
+
 	// Collect
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	FName ItemID = NAME_None;
