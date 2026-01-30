@@ -17,6 +17,8 @@ FName UDialogueGraphNode::ChoicePinName(int32 Index)
 
 void UDialogueGraphNode::AllocateDefaultPins()
 {
+	UE_LOG(LogTemp, Warning, TEXT("AllocateDefaultPins: Choices=%d"), Choices.Num());
+	
 	// Create the input pin
 	FEdGraphPinType PinType;
 	PinType.PinCategory = UDialogueEdGraphSchema::PC_Dialogue;
@@ -36,6 +38,11 @@ void UDialogueGraphNode::AllocateDefaultPins()
 		CreatePin(EGPD_Output, PinType, ChoicePinName(i));
 	}
 
+	for (UEdGraphPin* P : Pins)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Pin %s Dir=%d Hidden=%d"),
+			*P->PinName.ToString(), (int32)P->Direction, (int32)P->bHidden);
+	}
 }
 
 // Add this at the top of the file, after the includes
@@ -72,24 +79,96 @@ FText UDialogueGraphNode::GetNodeTitle(ENodeTitleType::Type TitleType) const
 	return LOCTEXT("UntitledNode", "Untitled Node");
 }
 
+#if WITH_EDITOR
+
+void UDialogueGraphNode::RebuildPinsFromChoices()
+{
+	UEdGraph* Graph = GetGraph();
+	if (!Graph)
+	{
+		return;
+	}
+
+	Modify();
+	Graph->Modify();
+
+	// 🔴 THIS is the missing step
+	// ReconstructNode() alone does nothing in your branch
+	UE_LOG(LogTemp, Warning, TEXT("RebuildPinsFromChoices: Choices=%d PinsBefore=%d"), Choices.Num(), Pins.Num());
+	Pins.Reset();
+	AllocateDefaultPins();
+	UE_LOG(LogTemp, Warning, TEXT("RebuildPinsFromChoices: PinsAfter=%d"), Pins.Num());
+
+	// Tell editor + slate to refresh
+	Graph->NotifyGraphChanged();
+}
+
+#endif
+
 // Add this at the end of the file
 #undef LOCTEXT_NAMESPACE
 
+#if WITH_EDITOR
+
+bool UDialogueGraphNode::PropertyChainContains(const FPropertyChangedChainEvent& Evt, FName TargetName)
+{
+	for (FEditPropertyChain::TDoubleLinkedListNode* Node = Evt.PropertyChain.GetHead();
+		Node;
+		Node = Node->GetNextNode())
+	{
+		if (const FProperty* P = Node->GetValue())
+		{
+			if (P->GetFName() == TargetName)
+			{
+				return true;
+			}
+		}
+	}
+	return false;
+}
 
 void UDialogueGraphNode::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
-	const FName PropertyName = PropertyChangedEvent.GetPropertyName();
-    
-	if (PropertyName == GET_MEMBER_NAME_CHECKED(UDialogueGraphNode, NodeID) ||
-		PropertyName == GET_MEMBER_NAME_CHECKED(UDialogueGraphNode, SpeakerID) ||
-		PropertyName == GET_MEMBER_NAME_CHECKED(UDialogueGraphNode, Text) ||
-		PropertyName == GET_MEMBER_NAME_CHECKED(UDialogueGraphNode, Choices))
-	{
-		ReconstructNode();
-	}
-    
+	// IMPORTANT: let the property apply first
 	Super::PostEditChangeProperty(PropertyChangedEvent);
+
+	const FName PropName   = PropertyChangedEvent.GetPropertyName();
+	const FName MemberName = PropertyChangedEvent.GetMemberPropertyName();
+
+	const bool bChoicesTouched =
+		(PropName == GET_MEMBER_NAME_CHECKED(UDialogueGraphNode, Choices)) ||
+		(MemberName == GET_MEMBER_NAME_CHECKED(UDialogueGraphNode, Choices));
+
+	if (bChoicesTouched)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("PostEditChangeProperty: Choices touched, Choices=%d"), Choices.Num());
+
+		Modify();
+		ReconstructNode();
+
+		if (UEdGraph* Graph = GetGraph())
+		{
+			Graph->NotifyGraphChanged();
+		}
+	}
 }
+
+void UDialogueGraphNode::PostEditChangeChainProperty(FPropertyChangedChainEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeChainProperty(PropertyChangedEvent);
+
+	// Array add/remove/edit reliably shows up here
+	const bool bChoicesTouched = PropertyChainContains(PropertyChangedEvent, GET_MEMBER_NAME_CHECKED(UDialogueGraphNode, Choices));
+
+	if (bChoicesTouched)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("PostEditChangeChainProperty: Choices touched, Choices=%d"), Choices.Num());
+
+		RebuildPinsFromChoices();
+	}
+}
+
+#endif
 
 UEdGraphPin* UDialogueGraphNode::GetInputPin() const
 {

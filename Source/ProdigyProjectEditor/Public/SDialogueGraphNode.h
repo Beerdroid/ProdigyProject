@@ -19,4 +19,7 @@ public:
 protected:
 	// Helpers
 	TSharedRef<SWidget> CreateTitleWidget();
+
+	virtual void CreatePinWidgets() override;
+	virtual void AddPin(const TSharedRef<SGraphPin>& PinToAdd) override;
 };

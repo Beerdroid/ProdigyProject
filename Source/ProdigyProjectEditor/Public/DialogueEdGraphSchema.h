@@ -29,7 +29,6 @@ public:
 	virtual EGraphType GetGraphType(const UEdGraph* TestEdGraph) const override { return GT_StateMachine; }
 
 
-
 private:
 	static bool IsInputPin(const UEdGraphPin* Pin);
 	static bool IsOutputPin(const UEdGraphPin* Pin);

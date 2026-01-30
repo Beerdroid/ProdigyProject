@@ -5,6 +5,7 @@
 
 #include "ConnectionDrawingPolicy.h"
 #include "DialogueGraphNode.h"
+#include "MovieSceneDirectorBlueprintEndpointCustomization.h"
 
 // Add the connection drawing policy class inside the cpp file
 class FDialogueConnectionDrawingPolicy : public FConnectionDrawingPolicy
@@ -96,45 +97,80 @@ const FPinConnectionResponse UDialogueEdGraphSchema::CanCreateConnection(const U
 
 namespace DialogueSchema_Internal
 {
-	// Minimal action that spawns our node
 	class FDialogueGraphAction_NewNode : public FEdGraphSchemaAction
 	{
 	public:
 		FDialogueGraphAction_NewNode()
 			: FEdGraphSchemaAction(
-				LOCTEXT("DialogueCategory", "Dialogue"),
-				LOCTEXT("DialogueAddNode", "Add Dialogue Node"),
-				LOCTEXT("DialogueAddNodeTooltip", "Creates a dialogue node"),
+				NSLOCTEXT("DialogueSchema", "DialogueCategory", "Dialogue"),
+				NSLOCTEXT("DialogueSchema", "DialogueAddNode", "Add Dialogue Node"),
+				NSLOCTEXT("DialogueSchema", "DialogueAddNodeTooltip", "Creates a dialogue node"),
 				0)
+		{}
+
+		// ✅ This IS the real virtual function in your engine
+		virtual UEdGraphNode* PerformAction(
+			UEdGraph* ParentGraph,
+			UEdGraphPin* FromPin,
+			const FVector2D Location,
+			bool bSelectNewNode = true) override
 		{
+			return PerformAction_Internal(
+				ParentGraph,
+				FromPin,
+				FVector2f((float)Location.X, (float)Location.Y),
+				bSelectNewNode);
 		}
 
-		virtual UEdGraphNode* PerformAction(UEdGraph* ParentGraph, UEdGraphPin* FromPin,
-			const FVector2D Location, bool bSelectNewNode = true) override
+	private:
+		// ❗ Not virtual, not override — internal implementation
+		UEdGraphNode* PerformAction_Internal(
+			UEdGraph* ParentGraph,
+			UEdGraphPin* FromPin,
+			const FVector2f Location,
+			bool bSelectNewNode)
 		{
 			if (!ParentGraph) return nullptr;
 
-			UDialogueGraphNode* NewNode = NewObject<UDialogueGraphNode>(ParentGraph);
-			ParentGraph->Modify();
-			ParentGraph->AddNode(NewNode, true, bSelectNewNode);
+			const FScopedTransaction Transaction(
+				NSLOCTEXT("DialogueEditor", "AddDialogueNode", "Add Dialogue Node"));
 
+			ParentGraph->Modify();
+
+			UDialogueGraphNode* NewNode =
+				NewObject<UDialogueGraphNode>(
+					ParentGraph,
+					UDialogueGraphNode::StaticClass(),
+					NAME_None,
+					RF_Transactional);
+
+			check(NewNode);
+
+			NewNode->CreateNewGuid();
 			NewNode->NodePosX = (int32)Location.X;
 			NewNode->NodePosY = (int32)Location.Y;
 
-			// Give a default choice so you can connect something immediately
 			if (NewNode->Choices.Num() == 0)
 			{
 				NewNode->Choices.AddDefaulted();
 			}
 
+			ParentGraph->AddNode(NewNode, true, bSelectNewNode);
+
 			NewNode->AllocateDefaultPins();
 			NewNode->PostPlacedNewNode();
 			NewNode->AutowireNewNode(FromPin);
+
+			// 🔑 REQUIRED so newly created nodes get proper SGraphPin widgets
+			ParentGraph->NotifyGraphChanged();
 
 			return NewNode;
 		}
 	};
 }
+
+
+
 
 bool UDialogueEdGraphSchema::IsInputPin(const UEdGraphPin* Pin)
 {

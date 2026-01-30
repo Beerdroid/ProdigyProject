@@ -41,6 +41,8 @@ private:
 	// Graph widgets
 	void OnSelectedNodesChanged(const TSet<UObject*>& NewSelection);
 
+	void OnFinishedChangingProperties(const FPropertyChangedEvent& PropertyChangedEvent);
+
 	// Helpers
 	void EnsureGraphExists();
 
@@ -53,6 +55,8 @@ private:
 
 	static const FName GraphTabId;
 	static const FName DetailsTabId;
+
+	void RefreshGraph();
 
 	void ExtendToolbar();
 

@@ -1,6 +1,7 @@
 ﻿#include "SDialogueGraphNode.h"
 
 #include "DialogueGraphNode.h"
+#include "SGraphPin.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Layout/SBorder.h"
@@ -21,16 +22,57 @@ TSharedRef<SWidget> SDialogueGraphNode::CreateTitleWidget()
 		.WrapTextAt(300.f);
 }
 
+void SDialogueGraphNode::CreatePinWidgets()
+{
+	UE_LOG(LogTemp, Warning, TEXT("SDialogueGraphNode::CreatePinWidgets Pins=%d"), GraphNode ? GraphNode->Pins.Num() : -1);
+
+	for (UEdGraphPin* CurPin : GraphNode->Pins)
+	{
+		if (!CurPin || CurPin->bHidden) continue;
+
+		TSharedRef<SGraphPin> NewPin = SNew(SGraphPin, CurPin);
+		AddPin(NewPin);
+	}
+}
+
+void SDialogueGraphNode::AddPin(const TSharedRef<SGraphPin>& PinToAdd)
+{
+	PinToAdd->SetOwner(SharedThis(this));
+
+	if (PinToAdd->GetDirection() == EGPD_Input)
+	{
+		InputPins.Add(PinToAdd);
+		LeftNodeBox->AddSlot()
+		.AutoHeight()
+		[
+			PinToAdd
+		];
+	}
+	else
+	{
+		OutputPins.Add(PinToAdd);
+		RightNodeBox->AddSlot()
+		.AutoHeight()
+		[
+			PinToAdd
+		];
+	}
+}
+
 void SDialogueGraphNode::UpdateGraphNode()
 {
+	// Reset the base class state as well
+	SGraphNode::UpdateGraphNode();
+
 	InputPins.Empty();
 	OutputPins.Empty();
 	RightNodeBox.Reset();
 	LeftNodeBox.Reset();
 
-	// Main layout
+	// Clear existing UI
 	this->ContentScale.Bind(this, &SGraphNode::GetContentScale);
 
+	// IMPORTANT: fully replace the center slot content
 	this->GetOrAddSlot(ENodeZone::Center)
 	.HAlign(HAlign_Fill)
 	.VAlign(VAlign_Fill)
@@ -40,35 +82,30 @@ void SDialogueGraphNode::UpdateGraphNode()
 		[
 			SNew(SVerticalBox)
 
-			// Title
 			+ SVerticalBox::Slot()
 			.AutoHeight()
 			[
 				CreateTitleWidget()
 			]
 
-			// Pins area
 			+ SVerticalBox::Slot()
 			.AutoHeight()
 			.Padding(0, 6)
 			[
 				SNew(SHorizontalBox)
 
-				// Inputs
 				+ SHorizontalBox::Slot()
 				.AutoWidth()
 				[
 					SAssignNew(LeftNodeBox, SVerticalBox)
 				]
 
-				// Spacer
 				+ SHorizontalBox::Slot()
 				.FillWidth(1.f)
 				[
 					SNew(SSpacer)
 				]
 
-				// Outputs
 				+ SHorizontalBox::Slot()
 				.AutoWidth()
 				[

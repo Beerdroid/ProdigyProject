@@ -182,6 +182,7 @@ TSharedRef<SDockTab> FDialogueAssetEditorToolkit::SpawnDetailsTab(const FSpawnTa
 	ViewArgs.NameAreaSettings = FDetailsViewArgs::HideNameArea;
 
 	DetailsView = PropModule.CreateDetailView(ViewArgs);
+	DetailsView->OnFinishedChangingProperties().AddRaw(this, &FDialogueAssetEditorToolkit::OnFinishedChangingProperties);
 
 	// Default show asset itself
 	DetailsView->SetObject(Asset.Get());
@@ -218,6 +219,17 @@ void FDialogueAssetEditorToolkit::EnsureGraphExists()
 		StartNode->NodePosY = 0;
 		StartNode->AllocateDefaultPins();
 	}
+	else
+	{
+		UEdGraph* Graph = Asset->EditorGraph;
+
+		// Fix-up schema if asset was created with old code / copied / etc.
+		if (!Graph->Schema || Graph->Schema != UDialogueEdGraphSchema::StaticClass())
+		{
+			Graph->Modify();
+			Graph->Schema = UDialogueEdGraphSchema::StaticClass();
+		}
+	}
 #endif
 }
 
@@ -238,6 +250,14 @@ void FDialogueAssetEditorToolkit::CompileDialogue()
 		{
 			DetailsView->SetObject(Asset.Get(), true);
 		}
+	}
+}
+
+void FDialogueAssetEditorToolkit::RefreshGraph()
+{
+	if (GraphEditor.IsValid())
+	{
+		GraphEditor->NotifyGraphChanged();
 	}
 }
 
@@ -279,4 +299,81 @@ void FDialogueAssetEditorToolkit::OnSelectedNodesChanged(const TSet<UObject*>& N
 	}
 
 	DetailsView->SetObject(Asset.Get());
+}
+
+void FDialogueAssetEditorToolkit::OnFinishedChangingProperties(const FPropertyChangedEvent& PropertyChangedEvent)
+{
+	const int32 Num = PropertyChangedEvent.GetNumObjectsBeingEdited();
+	UE_LOG(LogTemp, Warning, TEXT("FinishedChangingProperties: NumObjects=%d Prop=%s Member=%s"),
+		Num,
+		*PropertyChangedEvent.GetPropertyName().ToString(),
+		*PropertyChangedEvent.GetMemberPropertyName().ToString());
+
+	UDialogueGraphNode* NodeToRebuild = nullptr;
+
+	// 1) Try objects from the event
+	for (int32 i = 0; i < Num; ++i)
+	{
+		const UObject* ObjConst = PropertyChangedEvent.GetObjectBeingEdited(i);
+		UE_LOG(LogTemp, Warning, TEXT("  EditedObj[%d]=%s (%s)"),
+			i, *GetNameSafe(ObjConst), *GetNameSafe(ObjConst ? ObjConst->GetClass() : nullptr));
+
+		if (UDialogueGraphNode* AsNode = Cast<UDialogueGraphNode>(const_cast<UObject*>(ObjConst)))
+		{
+			NodeToRebuild = AsNode;
+			break;
+		}
+	}
+
+	// 2) Fallback: use currently displayed object in DetailsView (often more reliable)
+	if (!NodeToRebuild && DetailsView.IsValid())
+	{
+		TArray<TWeakObjectPtr<UObject>> Selected = DetailsView->GetSelectedObjects();
+
+		for (const TWeakObjectPtr<UObject>& W : Selected)
+		{
+			UObject* Obj = W.Get();
+			UE_LOG(LogTemp, Warning, TEXT("  DetailsSelected=%s (%s)"),
+				*GetNameSafe(Obj), *GetNameSafe(Obj ? Obj->GetClass() : nullptr));
+
+			if (UDialogueGraphNode* AsNode = Cast<UDialogueGraphNode>(Obj))
+			{
+				NodeToRebuild = AsNode;
+				break;
+			}
+		}
+	}
+
+	if (!NodeToRebuild)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("  No DialogueGraphNode found to rebuild."));
+		return;
+	}
+
+	UEdGraph* Graph = NodeToRebuild->GetGraph();
+	if (!Graph)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("  Node has no graph."));
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("  Rebuilding node %s: Choices=%d PinsBefore=%d"),
+		*GetNameSafe(NodeToRebuild),
+		NodeToRebuild->Choices.Num(),
+		NodeToRebuild->Pins.Num());
+
+	Graph->Modify();
+	NodeToRebuild->Modify();
+
+	// This MUST cause AllocateDefaultPins to run
+	NodeToRebuild->RebuildPinsFromChoices();
+
+	UE_LOG(LogTemp, Warning, TEXT("  After Reconstruct: PinsAfter=%d"), NodeToRebuild->Pins.Num());
+
+	Graph->NotifyGraphChanged();
+
+	if (GraphEditor.IsValid())
+	{
+		GraphEditor->NotifyGraphChanged();
+	}
 }

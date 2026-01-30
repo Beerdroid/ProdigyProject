@@ -33,7 +33,16 @@ public:
 	// Pins
 	virtual void AllocateDefaultPins() override;
 	virtual FText GetNodeTitle(ENodeTitleType::Type TitleType) const override;
+
+#if WITH_EDITOR
+	void RebuildPinsFromChoices();
+#endif
+	
+#if WITH_EDITOR
+	static bool PropertyChainContains(const FPropertyChangedChainEvent& Evt, FName TargetName);
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+	virtual void PostEditChangeChainProperty(FPropertyChangedChainEvent& PropertyChangedEvent) override;
+#endif
 
 	UEdGraphPin* GetInputPin() const;
 	UEdGraphPin* GetChoicePin(int32 ChoiceIndex) const;

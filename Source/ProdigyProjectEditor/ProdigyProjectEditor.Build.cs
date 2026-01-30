@@ -25,7 +25,8 @@ public class ProdigyProjectEditor : ModuleRules
 			"EditorStyle",
 
 			// to reference runtime dialogue asset/structs
-			"ProdigyProject"
+			"ProdigyProject",
+			"ApplicationCore", "MovieSceneTools"
 		});
 	}
 }
