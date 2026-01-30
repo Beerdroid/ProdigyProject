@@ -12,7 +12,7 @@
 				"Engine",
 				"UMG"
 			]
-		}
+		}, { "Name": "ProdigyProjectEditor", "Type": "Editor", "LoadingPhase": "PostEngineInit" }
 	],
 	"Plugins": [
 		{

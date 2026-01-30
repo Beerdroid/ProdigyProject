@@ -10,6 +10,6 @@ public class ProdigyProjectEditorTarget : TargetRules
 		Type = TargetType.Editor;
 		DefaultBuildSettings = BuildSettingsVersion.V6;
 
-		ExtraModuleNames.AddRange( new string[] { "ProdigyProject" } );
+		ExtraModuleNames.AddRange( new string[] { "ProdigyProject", "ProdigyProjectEditor" } );
 	}
 }
