@@ -478,6 +478,37 @@ void UQuestLogComponent::NotifyKillObjectiveTag(FGameplayTag TargetTag)
 	}
 }
 
+bool UQuestLogComponent::IsQuestAccepted(FName QuestID) const
+{
+	if (QuestID.IsNone())
+	{
+		return false;
+	}
+	return FindQuestStateConst(QuestID) != nullptr;
+}
+
+bool UQuestLogComponent::IsQuestCompleted(FName QuestID) const
+{
+	if (QuestID.IsNone())
+	{
+		return false;
+	}
+	if (const FQuestRuntimeState* S = FindQuestStateConst(QuestID))
+	{
+		return S->bIsCompleted;
+	}
+	return false;
+}
+
+bool UQuestLogComponent::IsQuestTurnedIn(FName QuestID) const
+{
+	if (const FQuestRuntimeState* S = FindQuestStateConst(QuestID))
+	{
+		return S->bIsTurnedIn;
+	}
+	return false;
+}
+
 void UQuestLogComponent::InitializeQuestProgress(FQuestRuntimeState& State, const FQuestDefinition& Def)
 {
 	State.ObjectiveProgress.Empty();

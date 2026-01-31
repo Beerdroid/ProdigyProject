@@ -119,8 +119,8 @@ struct FQuestLogEntryView
 	UPROPERTY(BlueprintReadOnly) FName QuestID = NAME_None;
 
 	// Definition
-	UPROPERTY(BlueprintReadOnly) FText Title;
-	UPROPERTY(BlueprintReadOnly) FText Description;
+	UPROPERTY(BlueprintReadOnly) FText Title = FText::GetEmpty();
+	UPROPERTY(BlueprintReadOnly) FText Description = FText::GetEmpty();
 
 	// Runtime
 	UPROPERTY(BlueprintReadOnly) bool bIsAccepted = false;

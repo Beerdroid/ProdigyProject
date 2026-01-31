@@ -1,0 +1,48 @@
+// Fill out your copyright notice in the Description page of Project Settings.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "DialogueSystemTypes.h"
+#include "Engine/DataAsset.h"
+#include "DialogueDataAsset.generated.h"
+
+/**
+ * 
+ */
+UCLASS(BlueprintType)
+class PRODIGYPROJECT_API UDialogueDataAsset : public UDataAsset
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(EditAnywhere, BlueprintReadOnly)
+	FName StartNodeID = "Start";
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(TitleProperty="NodeID"))
+	TArray<FDialogueNode> Nodes;
+
+	UPROPERTY(Transient)
+	TMap<FName, int32> NodeIndexByID;
+
+	bool TryGetNode(FName NodeID, FDialogueNode& OutNode) const;
+
+#if WITH_EDITORONLY_DATA
+	// Shown in Details, not saved to cook
+	UPROPERTY(VisibleAnywhere, Category="Dialogue|Debug", meta=(MultiLine=true))
+	FString FlowPreview;
+#endif
+
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+
+	UFUNCTION(CallInEditor, Category="Dialogue|Debug")
+	void RebuildFlowPreview();
+#endif
+
+protected:
+	virtual void PostLoad() override;
+
+private:
+	void RebuildNodeIndex();
+};

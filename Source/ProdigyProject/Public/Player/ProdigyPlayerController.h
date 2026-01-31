@@ -37,6 +37,9 @@ public:
 	UFUNCTION(Server, Reliable, BlueprintCallable, Category="Quest")
 	void Server_NotifyQuestsKillTag(FGameplayTag TargetTag);
 
+	UFUNCTION(BlueprintCallable, Category="Quest")
+	void ApplyQuests(FName QuestID);
+
 	UFUNCTION(BlueprintCallable, Category="Interaction")
 	virtual void PrimaryInteract() override;
 
