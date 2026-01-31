@@ -38,6 +38,8 @@ void UDialogueResolverComponent::CacheFromOwner()
 
 bool UDialogueResolverComponent::EvaluateAllConditions(const TArray<FDialogueCondition>& Conditions) const
 {
+	const_cast<UDialogueResolverComponent*>(this)->CacheFromOwner();
+	
 	for (const FDialogueCondition& C : Conditions)
 	{
 		if (!EvaluateCondition(C))
@@ -51,12 +53,15 @@ bool UDialogueResolverComponent::EvaluateAllConditions(const TArray<FDialogueCon
 bool UDialogueResolverComponent::EvaluateCondition(const FDialogueCondition& C) const
 {
 
-	const FName Q = C.QuestID; // use your real QuestID FName
-	UE_LOG(LogTemp, Warning, TEXT("QuestState: %s Accepted=%d Completed=%d TurnedIn=%d"),
-		*Q.ToString(),
-		QuestLog->IsQuestAccepted(Q),
-		QuestLog->IsQuestCompleted(Q),
-		QuestLog->IsQuestTurnedIn(Q));
+	if (QuestLog && !C.QuestID.IsNone())
+	{
+		const FName Q = C.QuestID;
+		UE_LOG(LogTemp, Verbose, TEXT("QuestState: %s Accepted=%d Completed=%d TurnedIn=%d"),
+			*Q.ToString(),
+			QuestLog->IsQuestAccepted(Q),
+			QuestLog->IsQuestCompleted(Q),
+			QuestLog->IsQuestTurnedIn(Q));
+	}
 	
 	switch (C.Op)
 	{

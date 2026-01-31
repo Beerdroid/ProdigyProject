@@ -22,6 +22,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(TitleProperty="NodeID"))
 	TArray<FDialogueNode> Nodes;
 
+	UPROPERTY(Transient)
+	TMap<FName, int32> NodeIndexByID;
+
 	bool TryGetNode(FName NodeID, FDialogueNode& OutNode) const;
 
 #if WITH_EDITORONLY_DATA
@@ -36,4 +39,10 @@ public:
 	UFUNCTION(CallInEditor, Category="Dialogue|Debug")
 	void RebuildFlowPreview();
 #endif
+
+protected:
+	virtual void PostLoad() override;
+
+private:
+	void RebuildNodeIndex();
 };

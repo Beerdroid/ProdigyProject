@@ -3,19 +3,77 @@
 
 #include "DialogueSystem/DialogueDataAsset.h"
 
+void UDialogueDataAsset::PostLoad()
+{
+	Super::PostLoad();
+	RebuildNodeIndex();
+}
+
+#if WITH_EDITOR
+void UDialogueDataAsset::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+
+	RebuildNodeIndex();      // keep cache in sync while editing
+	RebuildFlowPreview();    // your existing editor preview hook
+}
+#endif
+
+void UDialogueDataAsset::RebuildNodeIndex()
+{
+	NodeIndexByID.Reset();
+	NodeIndexByID.Reserve(Nodes.Num());
+
+	for (int32 i = 0; i < Nodes.Num(); ++i)
+	{
+		const FName ID = Nodes[i].NodeID;
+		if (ID.IsNone())
+		{
+			continue;
+		}
+
+		// First one wins; warn on duplicates
+		if (NodeIndexByID.Contains(ID))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Dialogue '%s': Duplicate NodeID '%s' (keeping first)"),
+				*GetNameSafe(this), *ID.ToString());
+			continue;
+		}
+
+		NodeIndexByID.Add(ID, i);
+	}
+}
+
 bool UDialogueDataAsset::TryGetNode(FName NodeID, FDialogueNode& OutNode) const
 {
-	if (NodeID.IsNone()) return false;
-
-	for (const FDialogueNode& N : Nodes)
+	if (NodeID.IsNone())
 	{
-		if (N.NodeID == NodeID)
+		return false;
+	}
+
+	const int32* IndexPtr = NodeIndexByID.Find(NodeID);
+	if (!IndexPtr)
+	{
+		// Fallback: in case cache wasn't built (edge cases), rebuild once and try again.
+		// (Keeps behavior robust without changing external code.)
+		UDialogueDataAsset* MutableThis = const_cast<UDialogueDataAsset*>(this);
+		MutableThis->RebuildNodeIndex();
+
+		IndexPtr = MutableThis->NodeIndexByID.Find(NodeID);
+		if (!IndexPtr)
 		{
-			OutNode = N;
-			return true;
+			return false;
 		}
 	}
-	return false;
+
+	const int32 Index = *IndexPtr;
+	if (!Nodes.IsValidIndex(Index))
+	{
+		return false;
+	}
+
+	OutNode = Nodes[Index];
+	return true;
 }
 
 #if WITH_EDITOR
@@ -50,9 +108,4 @@ void UDialogueDataAsset::RebuildFlowPreview()
 	FlowPreview = FString::Join(Lines, TEXT("\n"));
 }
 
-void UDialogueDataAsset::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
-{
-	Super::PostEditChangeProperty(PropertyChangedEvent);
-	RebuildFlowPreview();
-}
 #endif
