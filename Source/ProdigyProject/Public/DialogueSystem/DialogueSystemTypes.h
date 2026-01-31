@@ -101,6 +101,6 @@ struct FDialogueNode
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(MultiLine=true))
 	FText Text;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(TitleProperty = "Text"))
 	TArray<FDialogueChoice> Choices;
 };
