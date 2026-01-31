@@ -16,9 +16,28 @@ UDialogueComponent::UDialogueComponent()
 bool UDialogueComponent::StartDialogue(UDialogueResolverComponent* InResolver)
 {
 	Resolver = InResolver;
-	if (!Dialogue) return false;
+	if (!Dialogue)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("StartDialogue FAIL: Dialogue=null"));
+		return false;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("StartDialogue: Dialogue=%s StartNodeID=%s RuntimeNodes=%d"),
+		*GetPathNameSafe(Dialogue),
+		*Dialogue->StartNodeID.ToString(),
+		Dialogue->RuntimeNodes.Num());
+
+	// Print a few keys
+	int32 Count = 0;
+	for (const auto& KVP : Dialogue->RuntimeNodes)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("  Key[%d]=%s"), Count, *KVP.Key.ToString());
+		if (++Count >= 10) break;
+	}
 
 	const FName StartID = !StartNodeOverride.IsNone() ? StartNodeOverride : Dialogue->StartNodeID;
+	UE_LOG(LogTemp, Warning, TEXT("StartDialogue: StartID=%s"), *StartID.ToString());
+
 	return SetNode(StartID);
 }
 

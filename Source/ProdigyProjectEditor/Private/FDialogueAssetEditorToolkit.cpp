@@ -1,5 +1,6 @@
 ﻿#include "FDialogueAssetEditorToolkit.h"
 
+#include "DialogueDataAsset_GraphBake.h"
 #include "DialogueSystem/DialogueDataAsset.h"        // runtime asset
 #include "DialogueEdGraph.h"
 #include "DialogueEdGraphSchema.h"
@@ -238,13 +239,22 @@ void FDialogueAssetEditorToolkit::CompileDialogue()
 	if (!Asset) return;
 
 	Asset->Modify();
-	Asset->RebuildRuntimeData();
+
+#if WITH_EDITOR
+	UE_LOG(LogTemp, Warning, TEXT("CompileDialogue: Asset=%s RuntimeNodes(before)=%d"),
+		*GetPathNameSafe(Asset.Get()), Asset->RuntimeNodes.Num());
+
+	FDialogueGraphBakerEditor::Bake(Asset.Get());
+
+	UE_LOG(LogTemp, Warning, TEXT("CompileDialogue: RuntimeNodes(after)=%d"),
+		Asset->RuntimeNodes.Num());
+#endif
+
 	Asset->MarkPackageDirty();
 
-	// Optional: refresh details panel to reflect RuntimeNodes changes
+	// Refresh details panel
 	if (DetailsView.IsValid())
 	{
-		// If user is viewing a node, keep it; otherwise show asset (so you can see RuntimeNodes update)
 		UObject* Current = DetailsView->GetSelectedObjects().Num() > 0 ? DetailsView->GetSelectedObjects()[0].Get() : nullptr;
 		if (!Current || Current == Asset.Get())
 		{
