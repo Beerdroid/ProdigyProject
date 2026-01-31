@@ -48,7 +48,8 @@ public:
 	UEdGraphPin* GetChoicePin(int32 ChoiceIndex) const;
 
 	static FName InputPinName();
-	static FName ChoicePinName(int32 Index);
+	FText GetChoicePinDisplayText(int32 Index) const;
+	FName ChoicePinName(int32 Index) const;
 
 	virtual bool CanUserDeleteNode() const override { return true; }
 	virtual bool CanDuplicateNode() const override { return true; }

@@ -10,9 +10,41 @@ FName UDialogueGraphNode::InputPinName()
 	return TEXT("In");
 }
 
-FName UDialogueGraphNode::ChoicePinName(int32 Index)
+#if WITH_EDITOR
+FText UDialogueGraphNode::GetChoicePinDisplayText(int32 Index) const
 {
-	return *FString::Printf(TEXT("Choice %d"), Index);
+	if (!Choices.IsValidIndex(Index))
+	{
+		return FText::FromString(TEXT("Choice"));
+	}
+
+	// If you store NextNodeID in the choice struct:
+	const FName Next = Choices[Index].NextNodeID;
+	if (!Next.IsNone())
+	{
+		return FText::FromName(Next); // shows "end_accept"
+	}
+
+	// Fallback if no next set yet
+	return FText::FromString(FString::Printf(TEXT("Choice %d"), Index));
+}
+#endif
+
+
+FName UDialogueGraphNode::ChoicePinName(int32 Index) const
+{
+	FString Suffix;
+
+	if (Choices.IsValidIndex(Index))
+	{
+		const FName NextId = Choices[Index].NextNodeID;
+		if (!NextId.IsNone())
+		{
+			Suffix = TEXT("_") + NextId.ToString();
+		}
+	}
+
+	return *FString::Printf(TEXT("Choice_%d%s"), Index, *Suffix);
 }
 
 void UDialogueGraphNode::AllocateDefaultPins()
