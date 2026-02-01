@@ -2,6 +2,7 @@
 
 #include "Game/ProdigyGameState.h"
 #include "GameFramework/Character.h"
+#include "Quest/Integration/QuestIntegrationComponent.h"
 #include "Quest/Interfaces/QuestInventoryProvider.h"
 #include "Quest/Interfaces/QuestKillEventSource.h"
 #include "Quest/Interfaces/QuestRewardReceiver.h"
@@ -58,89 +59,57 @@ void UQuestLogComponent::HandleKillTagNative(FGameplayTag TargetTag)
 
 void UQuestLogComponent::BindIntegration()
 {
-	if (bIntegrationBound &&
-		InventoryProvider.GetObject() && RewardReceiver.GetObject())
-	{
-		// Ensure delegates are still bound (kill + inventory) and return.
-		if (KillEventSource.GetObject())
-		{
-			FOnQuestKillTagNative& KillDelegate = KillEventSource.GetInterface()->GetKillDelegate();
-			KillDelegate.RemoveAll(this);
-			KillDelegate.AddUObject(this, &UQuestLogComponent::HandleKillTagNative);
-		}
-
-		// Inventory delta binding
-		if (InventoryProvider.GetObject())
-		{
-			FOnQuestInventoryDelta& InvDelta = InventoryProvider.GetInterface()->GetInventoryDeltaDelegate();
-			InvDelta.RemoveAll(this);
-			InvDelta.AddDynamic(this, &UQuestLogComponent::HandleInventoryDelta);
-		}
-
-		return;
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT("QuestLog BindIntegration: Owner=%s InventoryProvider=%s"),
-	*GetNameSafe(GetOwner()),
-	*GetNameSafe(InventoryProvider.GetObject()));
-
 	AActor* OwnerActor = GetOwner();
-	if (!OwnerActor)
+	if (!OwnerActor) return;
+
+	// If QuestLog is on PC, this hits immediately.
+	APlayerController* PC = Cast<APlayerController>(OwnerActor);
+
+	// If QuestLog is on Pawn, resolve controller.
+	if (!PC)
 	{
-		return;
+		if (APawn* Pawn = Cast<APawn>(OwnerActor))
+		{
+			PC = Cast<APlayerController>(Pawn->GetController());
+		}
 	}
 
-	// Reset (optional but recommended if you want hot-rebind)
+	UQuestIntegrationComponent* Integration = PC ? PC->FindComponentByClass<UQuestIntegrationComponent>() : nullptr;
+
+	UE_LOG(LogTemp, Warning, TEXT("QuestLog BindIntegration: Owner=%s PC=%s Integration=%s"),
+		*GetNameSafe(OwnerActor),
+		*GetNameSafe(PC),
+		*GetNameSafe(Integration));
+
 	InventoryProvider = nullptr;
 	RewardReceiver = nullptr;
 	KillEventSource = nullptr;
 	CachedIntegrationComponent = nullptr;
 
-	// Find any component that implements our interfaces
-	TArray<UActorComponent*> Components;
-	OwnerActor->GetComponents(Components);
-
-	for (UActorComponent* C : Components)
+	if (!IsValid(Integration))
 	{
-		if (!C) continue;
-
-		if (!InventoryProvider && C->GetClass()->ImplementsInterface(UQuestInventoryProvider::StaticClass()))
-		{
-			InventoryProvider.SetObject(C);
-			InventoryProvider.SetInterface(Cast<IQuestInventoryProvider>(C));
-			CachedIntegrationComponent = C;
-		}
-
-		if (!RewardReceiver && C->GetClass()->ImplementsInterface(UQuestRewardReceiver::StaticClass()))
-		{
-			RewardReceiver.SetObject(C);
-			RewardReceiver.SetInterface(Cast<IQuestRewardReceiver>(C));
-			CachedIntegrationComponent = C;
-		}
-
-		if (!KillEventSource && C->GetClass()->ImplementsInterface(UQuestKillEventSource::StaticClass()))
-		{
-			KillEventSource.SetObject(C);
-			KillEventSource.SetInterface(Cast<IQuestKillEventSource>(C));
-			CachedIntegrationComponent = C;
-		}
+		bIntegrationBound = false;
+		return;
 	}
 
-	// Bind kill delegate once (optional integration)
-	if (KillEventSource)
+	InventoryProvider.SetObject(Integration);
+	RewardReceiver.SetObject(Integration);
+	KillEventSource.SetObject(Integration);
+	CachedIntegrationComponent = Integration;
+
+	// Bind delegates through cast at bind-time (robust for BP child)
+	if (IQuestInventoryProvider* InvIface = Cast<IQuestInventoryProvider>(Integration))
 	{
-		FOnQuestKillTagNative& KillDelegate = KillEventSource.GetInterface()->GetKillDelegate();
-
-		KillDelegate.RemoveAll(this);
-		KillDelegate.AddUObject(this, &UQuestLogComponent::HandleKillTagNative);
-	}
-
-	if (InventoryProvider)
-	{
-		FOnQuestInventoryDelta& InvDelta = InventoryProvider.GetInterface()->GetInventoryDeltaDelegate();
-
+		FOnQuestInventoryDelta& InvDelta = InvIface->GetInventoryDeltaDelegate();
 		InvDelta.RemoveAll(this);
 		InvDelta.AddDynamic(this, &UQuestLogComponent::HandleInventoryDelta);
+	}
+
+	if (IQuestKillEventSource* KillIface = Cast<IQuestKillEventSource>(Integration))
+	{
+		FOnQuestKillTagNative& KillDelegate = KillIface->GetKillDelegate();
+		KillDelegate.RemoveAll(this);
+		KillDelegate.AddUObject(this, &UQuestLogComponent::HandleKillTagNative);
 	}
 
 	bIntegrationBound = true;
@@ -562,22 +531,26 @@ void UQuestLogComponent::NotifyInventoryChanged()
 
 void UQuestLogComponent::GrantFinalRewards(const FQuestDefinition& Def)
 {
-	if (InventoryProvider && InventoryProvider.GetObject())
+	if (UObject* InvObj = InventoryProvider.GetObject())
 	{
-		UObject* InvObj = InventoryProvider.GetObject();
 		for (const FQuestItemReward& R : Def.FinalItemRewards)
 		{
 			if (R.ItemID.IsNone() || R.Quantity <= 0) continue;
+
 			const bool bOk = IQuestInventoryProvider::Execute_AddItemByID(InvObj, R.ItemID, R.Quantity, this);
-			UE_LOG(LogTemp, Warning, TEXT("GrantFinalRewards AddItem %s x%d -> %d"), *R.ItemID.ToString(), R.Quantity, (int32)bOk);
+			UE_LOG(LogTemp, Warning, TEXT("GrantFinalRewards AddItem %s x%d -> %d"),
+				*R.ItemID.ToString(), R.Quantity, (int32)bOk);
 		}
 	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GrantFinalRewards: InventoryProvider=None"));
+	}
+
 	UE_LOG(LogTemp, Warning, TEXT("GrantFinalRewards Currency=%d XP=%d"), Def.FinalCurrencyReward, Def.FinalXPReward);
 
-	if (RewardReceiver)
+	if (UObject* RewardObj = RewardReceiver.GetObject())
 	{
-		UObject* RewardObj = RewardReceiver.GetObject();
-
 		if (Def.FinalCurrencyReward > 0)
 		{
 			IQuestRewardReceiver::Execute_AddCurrency(RewardObj, Def.FinalCurrencyReward);
@@ -586,6 +559,10 @@ void UQuestLogComponent::GrantFinalRewards(const FQuestDefinition& Def)
 		{
 			IQuestRewardReceiver::Execute_AddXP(RewardObj, Def.FinalXPReward);
 		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GrantFinalRewards: RewardReceiver=None"));
 	}
 }
 

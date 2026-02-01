@@ -13,7 +13,7 @@ class UQuestIntegrationComponent;
 
 
 UCLASS()
-class PRODIGYPROJECT_API AProdigyPlayerController : public AInv_PlayerController, public IQuestInventoryProvider
+class PRODIGYPROJECT_API AProdigyPlayerController : public AInv_PlayerController
 {
 	GENERATED_BODY()
 
@@ -44,11 +44,6 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Interaction")
 	virtual void PrimaryInteract() override;
-
-	virtual bool AddItemByID_Implementation(FName ItemID, int32 Quantity, UObject* Context) override;
-
-	virtual FOnQuestInventoryDelta& GetInventoryDeltaDelegate() override;
-
 
 protected:
 	// Add in BP child if you prefer; these will auto-find if present.

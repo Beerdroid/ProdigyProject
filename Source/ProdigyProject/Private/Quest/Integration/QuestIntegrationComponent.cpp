@@ -3,7 +3,6 @@
 #include "Game/ProdigyGameState.h"
 #include "GameFramework/Actor.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
-#include "Items/Components/Inv_ItemComponent.h"
 #include "Items/Fragments/Inv_ItemFragment.h"
 #include "Net/UnrealNetwork.h"
 
@@ -13,13 +12,37 @@ void UQuestIntegrationComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	if (AActor* Owner = GetOwner())
+	AActor* Owner = GetOwner();
+	if (!Owner) return;
+
+	InventoryComp = Owner->FindComponentByClass<UInv_InventoryComponent>();
+
+	// If integration is on PC but inventory is on pawn (or vice versa), fallback once.
+	if (!IsValid(InventoryComp))
 	{
-		if (UInv_InventoryComponent* Inv = Owner->FindComponentByClass<UInv_InventoryComponent>())
+		if (APlayerController* PC = Cast<APlayerController>(Owner))
 		{
-			InventoryComp = Inv;
-			InventoryComp->OnInvDelta.AddUObject(this, &UQuestIntegrationComponent::HandleInvDelta);
+			if (APawn* Pawn = PC->GetPawn())
+			{
+				InventoryComp = Pawn->FindComponentByClass<UInv_InventoryComponent>();
+			}
 		}
+		else if (APawn* Pawn = Cast<APawn>(Owner))
+		{
+			if (APlayerController* Controller = Cast<APlayerController>(Pawn->GetController()))
+			{
+				InventoryComp = Controller->FindComponentByClass<UInv_InventoryComponent>();
+			}
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[QuestIntegration] BeginPlay Owner=%s InventoryComp=%s"),
+		*GetNameSafe(Owner),
+		*GetNameSafe(InventoryComp));
+
+	if (IsValid(InventoryComp))
+	{
+		InventoryComp->OnInvDelta.AddUObject(this, &UQuestIntegrationComponent::HandleInvDelta);
 	}
 }
 
@@ -102,118 +125,36 @@ void UQuestIntegrationComponent::BroadcastInventoryDelta(FName ItemID, int32 Del
 
 int32 UQuestIntegrationComponent::GetTotalQuantityByItemID_Implementation(FName ItemID) const
 {
-	if (ItemID.IsNone()) return 0;
-
+	if (ItemID.IsNone() || !IsValid(InventoryComp)) return 0;
 	return InventoryComp->GetTotalQuantityByItemID(ItemID);
 }
 
 bool UQuestIntegrationComponent::AddItemByID_Implementation(FName ItemID, int32 Quantity, UObject* Context)
 {
-	UE_LOG(LogTemp, Warning, TEXT("QuestIntegration AddItemByID Item=%s Qty=%d Auth=%d"),
-		*ItemID.ToString(), Quantity, GetOwner() ? (int32)GetOwner()->HasAuthority() : -1);
-
-	if (ItemID.IsNone() || Quantity <= 0)
-	{
-		return false;
-	}
+	if (ItemID.IsNone() || Quantity <= 0) return false;
 
 	AActor* OwnerActor = GetOwner();
 	if (!OwnerActor || !OwnerActor->HasAuthority())
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[QuestIntegration] AddItemByID rejected (not authority) Owner=%s"),
+			*GetNameSafe(OwnerActor));
 		return false;
 	}
 
 	if (!IsValid(InventoryComp))
 	{
-		UE_LOG(LogTemp, Error, TEXT("QuestIntegration AddItemByID: InventoryComp missing (Owner=%s)"),
+		UE_LOG(LogTemp, Warning, TEXT("[QuestIntegration] AddItemByID failed: InventoryComp=None Owner=%s"),
 			*GetNameSafe(OwnerActor));
 		return false;
 	}
 
-	// Manifest lookup (GS / DT)
-	FInv_ItemManifest Manifest;
-	if (!TryGetItemManifest(ItemID, Manifest))
-	{
-		UE_LOG(LogTemp, Error, TEXT("QuestIntegration AddItemByID: Manifest not found for %s"), *ItemID.ToString());
-		return false;
-	}
+	// If your AddItemByID_ServerAuth internally does manifest lookup, you can skip this.
+	// If it needs manifest, keep lookup inside the inventory component. (Preferred.)
+	int32 Remainder = 0;
+	const bool bOk = InventoryComp->AddItemByID_ServerAuth(ItemID, Quantity, Context, Remainder);
 
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		return false;
-	}
-
-	// Spawn a transient actor to host the item component (so PickedUp() destroys THIS actor, not PC)
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	SpawnParams.Owner = OwnerActor; // optional
-
-	AActor* TempPickupActor = World->SpawnActor<AActor>(AActor::StaticClass(), FTransform::Identity, SpawnParams);
-	if (!IsValid(TempPickupActor))
-	{
-		UE_LOG(LogTemp, Error, TEXT("QuestIntegration AddItemByID: Failed to spawn temp pickup actor"));
-		return false;
-	}
-
-	TempPickupActor->SetActorEnableCollision(false);
-	TempPickupActor->SetReplicates(false);
-
-	// Create the item component owned by the temp actor
-	UInv_ItemComponent* TempItemComp = NewObject<UInv_ItemComponent>(TempPickupActor, TEXT("TempQuestRewardItemComp"));
-	if (!IsValid(TempItemComp))
-	{
-		TempPickupActor->Destroy();
-		return false;
-	}
-
-	// Make ownership/lifecycle explicit (optional but recommended)
-	TempPickupActor->AddInstanceComponent(TempItemComp);
-
-	// Register => GetOwner() becomes TempPickupActor and PickedUp()->Destroy() is safe
-	TempItemComp->RegisterComponent();
-
-	// Initialize like a real pickup
-	TempItemComp->InitItemManifest(Manifest);
-	TempItemComp->SetItemID(ItemID);
-
-	// Put reward quantity into the stack fragment so pickup logic sees correct stack/remainder
-	if (FInv_StackableFragment* StackFrag =
-		TempItemComp->GetItemManifestMutable().GetFragmentOfTypeMutable<FInv_StackableFragment>())
-	{
-		StackFrag->SetStackCount(Quantity);
-	}
-
-	UE_LOG(LogTemp, Warning, TEXT("QuestIntegration AddItemByID: TempActor=%s CompOwner=%s Registered=%d"),
-		*GetNameSafe(TempPickupActor),
-		*GetNameSafe(TempItemComp->GetOwner()),
-		(int32)TempItemComp->IsRegistered());
-
-	// TryAddItem is void -> verify via totals
-	const int32 Before = InventoryComp->GetTotalQuantityByItemID(ItemID);
-
-	InventoryComp->TryAddItem(TempItemComp);
-
-	const int32 After = InventoryComp->GetTotalQuantityByItemID(ItemID);
-	const int32 Added = After - Before;
-
-	const bool bOk = (Added == Quantity);
-
-	UE_LOG(LogTemp, Warning, TEXT("QuestIntegration AddItemByID: Before=%d After=%d Added=%d Ok=%d"),
-		Before, After, Added, (int32)bOk);
-
-	// Policy for quest rewards:
-	// If not fully added, destroy temp actor so you don't leave invisible pickups around.
-	// (If you want "drop remainder", DON'T destroy here; instead keep it and position it.)
-	if (!bOk && IsValid(TempPickupActor))
-	{
-		TempPickupActor->Destroy();
-	}
-
-	if (bOk)
-	{
-		BroadcastInventoryDelta(ItemID, +Quantity, Context);
-	}
+	UE_LOG(LogTemp, Warning, TEXT("[QuestIntegration] AddItemByID ItemID=%s Qty=%d -> %d Rem=%d Inv=%s"),
+		*ItemID.ToString(), Quantity, (int32)bOk, Remainder, *GetNameSafe(InventoryComp));
 
 	return bOk;
 }
@@ -224,6 +165,13 @@ void UQuestIntegrationComponent::RemoveItemByID_Implementation(FName ItemID, int
 
 	AActor* OwnerActor = GetOwner();
 	if (!OwnerActor || !OwnerActor->HasAuthority()) return;
+
+	if (!IsValid(InventoryComp))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[QuestIntegration] RemoveItemByID failed: InventoryComp=None Owner=%s"),
+			*GetNameSafe(OwnerActor));
+		return;
+	}
 
 	InventoryComp->Server_RemoveItemByID(ItemID, Quantity, Context);
 }

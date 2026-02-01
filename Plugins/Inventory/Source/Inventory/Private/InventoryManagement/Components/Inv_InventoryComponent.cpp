@@ -27,6 +27,7 @@ void UInv_InventoryComponent::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 
 	DOREPLIFETIME(ThisClass, InventoryList);
 	DOREPLIFETIME(ThisClass, bInitialized);
+	DOREPLIFETIME(ThisClass, PredefinedItems);
 }
 
 FName UInv_InventoryComponent::ResolveItemIDFromInventoryItem(const UInv_InventoryItem* Item) const
@@ -519,13 +520,52 @@ void UInv_InventoryComponent::AddRepSubObj(UObject* SubObj)
 void UInv_InventoryComponent::BeginPlay()
 {
 	Super::BeginPlay();
-	
+
+	// keep this so client can show inventory when it arrives
 	ConstructInventory();
 
-	if (AActor* Owner = GetOwner(); Owner && Owner->HasAuthority())
+	// critical for client-side fastarray callbacks
+	InventoryList.OwnerComponent = this;
+}
+
+void UInv_InventoryComponent::ReadyForReplication()
+{
+	Super::ReadyForReplication();
+
+	AActor* Owner = GetOwner();
+	if (!Owner || !Owner->HasAuthority()) return;
+	if (bInitialized) return;
+
+	// If you rely on AddReplicatedSubObject, you want this to be true here.
+	if (!IsReadyForReplication()) return;
+
+	UE_LOG(LogTemp, Warning, TEXT("[PredefInit] ReadyForReplication Owner=%s"), *GetNameSafe(Owner));
+
+	// Call implementation directly (no RPC / ownership weirdness)
+	Server_InitializeFromPredefinedItems_Implementation();
+
+	bInitialized = true;
+}
+
+void UInv_InventoryComponent::SyncInventoryToUI()
+{
+	if (!IsValid(InventoryMenu)) return;
+
+	const TArray<UInv_InventoryItem*> Items = InventoryList.GetAllItems();
+
+	UE_LOG(LogTemp, Warning, TEXT("[InvUI] SyncInventoryToUI Owner=%s Items=%d"),
+		*GetNameSafe(GetOwner()), Items.Num());
+
+	for (UInv_InventoryItem* Item : Items)
 	{
-		// If this component is on a player pawn, this covers listen + dedicated
-		Server_InitializeFromPredefinedItems();
+		if (!IsValid(Item)) continue;
+
+		UE_LOG(LogTemp, Warning, TEXT("[InvUI]  Replay Add Item=%s ItemID=%s Stack=%d"),
+			*GetNameSafe(Item),
+			*Item->GetItemID().ToString(),
+			Item->GetTotalStackCount());
+
+		OnItemAdded.Broadcast(Item);
 	}
 }
 
@@ -787,6 +827,8 @@ void UInv_InventoryComponent::ConstructInventory()
 	InventoryMenu->SetVisibility(ESlateVisibility::Collapsed);
 	InventoryMenu->SetIsEnabled(false);
 	bInventoryMenuOpen = false;
+
+	SyncInventoryToUI();
 }
 
 void UInv_InventoryComponent::Server_InitializeMerchantStock_Implementation()

@@ -107,11 +107,15 @@ public:
 	UPROPERTY(Replicated)
 	bool bInitialized = false;
 
-	UPROPERTY(EditAnywhere, Category="Inventory|Predefined")
+	UPROPERTY(Replicated, EditAnywhere, Category="Inventory|Predefined")
 	TArray<FInv_PredefinedItemEntry> PredefinedItems;
 	
 protected:
 	virtual void BeginPlay() override;
+
+	virtual void ReadyForReplication() override;
+
+	void SyncInventoryToUI();
 
 private:
 
