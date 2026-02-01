@@ -118,7 +118,8 @@ bool UInv_InventoryComponent::TryAddItemByManifest(FName ItemID, const FInv_Item
 		}
 		else
 		{
-			Server_AddNewItemFromManifest(ItemID, Manifest, Result.bStackable ? Result.TotalRoomToFill : 0);
+			const int32 CountToCreate = Result.bStackable ? Result.TotalRoomToFill : 1;
+			Server_AddNewItemFromManifest(ItemID, Manifest, CountToCreate);
 		}
 
 		UE_LOG(LogTemp, Warning, TEXT("TryAddItemByManifest UIResult: TotalRoomToFill=%d Remainder=%d bStackable=%d FoundItem=%s"),
@@ -219,8 +220,17 @@ void UInv_InventoryComponent::TryAddItem(UInv_ItemComponent* ItemComponent)
 	}
 	else if (Result.TotalRoomToFill > 0)
 	{
-		// This item type doesn't exist in the inventory. Create a new one and update all pertinent slots.
-		Server_AddNewItem(ItemComponent, Result.bStackable ? Result.TotalRoomToFill : 0, Result.Remainder);
+		// For non-stackables, each pickup actor represents exactly one item.
+		const int32 CountToCreate = Result.bStackable ? Result.TotalRoomToFill : 1;
+		Server_AddNewItem(ItemComponent, CountToCreate, Result.Remainder);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("INV AFTER PICKUP: Entries=%d"), InventoryList.GetAllItems().Num());
+	for (const auto& E : InventoryList.GetAllItems())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("  Entry: ItemID=%s Qty=%d"),
+			*E->GetItemID().ToString(),
+			E->GetTotalStackCount());
 	}
 }
 
@@ -289,7 +299,7 @@ void UInv_InventoryComponent::Server_RemoveItemByID_Implementation(FName ItemID,
 
 void UInv_InventoryComponent::Server_AddNewItem_Implementation(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder)
 {
-	if (!IsValid(ItemComponent) || StackCount < 0) return;
+	if (!IsValid(ItemComponent) || StackCount <= 0) return;
 
 	UInv_InventoryItem* NewItem = InventoryList.AddEntry(ItemComponent);
 	if (!IsValid(NewItem)) return;
