@@ -28,6 +28,14 @@ public:
 
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category="Interaction")
 	AActor* GetHoveredActor() const { return ThisActor.Get(); }
+	
+	UFUNCTION(Server, Reliable)
+	void Server_StartTrade(AActor* MerchantActor);
+
+	UFUNCTION(Client, Reliable)
+	void Client_OpenMerchantTrade(AActor* Merchant);
+
+
 
 protected:
 	virtual void BeginPlay() override;

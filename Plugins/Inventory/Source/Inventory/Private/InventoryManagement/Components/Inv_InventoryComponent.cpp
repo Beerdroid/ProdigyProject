@@ -3,6 +3,8 @@
 
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 
+#include "GameFramework/GameStateBase.h"
+#include "Interfaces/Inv_ItemManifestProvider.h"
 #include "Items/Components/Inv_ItemComponent.h"
 #include "Widgets/Inventory/InventoryBase/Inv_InventoryBase.h"
 #include "Net/UnrealNetwork.h"
@@ -24,6 +26,7 @@ void UInv_InventoryComponent::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(ThisClass, InventoryList);
+	DOREPLIFETIME(ThisClass, bInitialized);
 }
 
 FName UInv_InventoryComponent::ResolveItemIDFromInventoryItem(const UInv_InventoryItem* Item) const
@@ -78,7 +81,6 @@ FInv_ItemView UInv_InventoryComponent::BuildItemViewFromManifest(const FInv_Item
 
 	return View;
 }
-
 
 bool UInv_InventoryComponent::TryAddItemByManifest(FName ItemID, const FInv_ItemManifest& Manifest, int32 Quantity, int32& OutRemainder)
 {
@@ -169,8 +171,15 @@ void UInv_InventoryComponent::Server_AddNewItemFromManifest_Implementation(FName
 	UInv_InventoryItem* NewItem = InventoryList.AddEntryFromManifest(Manifest);
 	if (!IsValid(NewItem)) return;
 
-	NewItem->SetItemID(ItemID);               
+	NewItem->SetItemID(ItemID);
 	NewItem->SetTotalStackCount(StackCount);
+
+	// 🔥 Sync manifest fragment stack so UI that reads fragment shows correct value
+	if (FInv_StackableFragment* StackFrag =
+		NewItem->GetItemManifestMutable().GetFragmentOfTypeMutable<FInv_StackableFragment>())
+	{
+		StackFrag->SetStackCount(StackCount);
+	}
 
 	EmitInvDeltaByItemID(ItemID, +StackCount, this);
 
@@ -187,13 +196,20 @@ void UInv_InventoryComponent::Server_AddStacksToItemFromManifest_Implementation(
 	UInv_InventoryItem* Item = InventoryList.FindFirstItemByID(ItemID);
 	if (!IsValid(Item)) return;
 
-	// Ensure identity is persisted on the entry (defensive for legacy items)
 	if (Item->GetItemID().IsNone())
 	{
 		Item->SetItemID(ItemID);
 	}
 
-	Item->SetTotalStackCount(Item->GetTotalStackCount() + StackCount);
+	const int32 NewTotal = Item->GetTotalStackCount() + StackCount;
+	Item->SetTotalStackCount(NewTotal);
+
+	// 🔥 Sync fragment stack
+	if (FInv_StackableFragment* StackFrag =
+		Item->GetItemManifestMutable().GetFragmentOfTypeMutable<FInv_StackableFragment>())
+	{
+		StackFrag->SetStackCount(NewTotal);
+	}
 
 	EmitInvDeltaByItemID(ItemID, +StackCount, this);
 }
@@ -232,6 +248,50 @@ void UInv_InventoryComponent::TryAddItem(UInv_ItemComponent* ItemComponent)
 			*E->GetItemID().ToString(),
 			E->GetTotalStackCount());
 	}
+}
+
+bool UInv_InventoryComponent::AddItemByID_ServerAuth(FName ItemID, int32 Quantity, UObject* Context,
+	int32& OutRemainder)
+{
+	OutRemainder = Quantity;
+
+	AActor* Owner = GetOwner();
+	if (!Owner || !Owner->HasAuthority())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[AddByID] FAIL: not authority Owner=%s"), *GetNameSafe(Owner));
+		return false;
+	}
+
+	if (ItemID.IsNone() || Quantity <= 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[AddByID] FAIL: invalid args ItemID=%s Qty=%d"), *ItemID.ToString(), Quantity);
+		return false;
+	}
+
+	// 1) Resolve manifest via interface provider (GameState implements it)
+	FInv_ItemManifest Manifest;
+	if (!ResolveManifestByItemID(ItemID, Manifest))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[AddByID] FAIL: manifest not found ItemID=%s"), *ItemID.ToString());
+		return false;
+	}
+
+	// 2) Add using the proven NoUI logic (server-safe, deterministic)
+	const bool bOk = TryAddItemByManifest_NoUI(ItemID, Manifest, Quantity, OutRemainder);
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[AddByID] ItemID=%s Qty=%d -> Ok=%d Remainder=%d Context=%s"),
+		*ItemID.ToString(),
+		Quantity,
+		(int32)bOk,
+		OutRemainder,
+		*GetNameSafe(Context)
+	);
+
+	// If you want deltas/quest updates, you already EmitInvDelta in the server add functions.
+	// Nothing else needed here.
+
+	return bOk;
 }
 
 void UInv_InventoryComponent::Server_RemoveItemByID_Implementation(FName ItemID, int32 Quantity, UObject* Context)
@@ -461,23 +521,276 @@ void UInv_InventoryComponent::BeginPlay()
 	Super::BeginPlay();
 	
 	ConstructInventory();
+
+	if (AActor* Owner = GetOwner(); Owner && Owner->HasAuthority())
+	{
+		// If this component is on a player pawn, this covers listen + dedicated
+		Server_InitializeFromPredefinedItems();
+	}
+}
+
+bool UInv_InventoryComponent::ResolveManifestByItemID(FName ItemID, FInv_ItemManifest& OutManifest) const
+{
+	if (ItemID.IsNone()) return false;
+	if (!GetWorld()) return false;
+
+	AGameStateBase* GS = GetWorld()->GetGameState();
+	if (!GS) return false;
+
+	if (!GS->GetClass()->ImplementsInterface(UInv_ItemManifestProvider::StaticClass()))
+	{
+		return false;
+	}
+
+	return IInv_ItemManifestProvider::Execute_FindItemManifest(GS, ItemID, OutManifest);
+}
+
+void UInv_InventoryComponent::Server_InitializeFromPredefinedItems_Implementation()
+{
+	AActor* Owner = GetOwner();
+	if (!Owner || !Owner->HasAuthority()) return;
+
+	// IMPORTANT:
+	// Do NOT reuse this flag for UI construction.
+	// This flag strictly means "predefined items already applied".
+	if (bInitialized) return;
+	bInitialized = true;
+
+	if (PredefinedItems.Num() == 0) return;
+
+	UE_LOG(LogTemp, Warning,
+	TEXT("[PredefInit] Owner=%s Auth=%d Items=%d"),
+	*GetNameSafe(GetOwner()),
+	GetOwner()->HasAuthority(),
+	PredefinedItems.Num()
+);
+
+	for (const FInv_PredefinedItemEntry& Entry : PredefinedItems)
+	{
+		UE_LOG(LogTemp, Warning,
+	TEXT("[PredefInit] Add ItemID=%s Qty=%d"),
+	*Entry.ItemID.ToString(),
+	Entry.Quantity
+);
+		if (Entry.ItemID.IsNone() || Entry.Quantity <= 0)
+		{
+			continue;
+		}
+
+		// Resolve manifest from ItemID (must use your existing item DB)
+		FInv_ItemManifest Manifest;
+		if (!ResolveManifestByItemID(Entry.ItemID, Manifest))
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("InitializeFromPredefinedItems: Manifest not found for ItemID=%s Owner=%s"),
+				*Entry.ItemID.ToString(),
+				*GetNameSafe(Owner));
+			continue;
+		}
+
+		int32 Remainder = 0;
+
+		// Reuses ALL your existing logic:
+		// - UI path if InventoryMenu exists (player inventory)
+		// - Server-only fallback otherwise (NPC / chest / merchant)
+		TryAddItemByManifest_NoUI(Entry.ItemID, Manifest, Entry.Quantity, Remainder);
+
+		if (Remainder > 0)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("InitializeFromPredefinedItems: Remainder=%d ItemID=%s Owner=%s"),
+				Remainder,
+				*Entry.ItemID.ToString(),
+				*GetNameSafe(Owner));
+		}
+	}
+
+}
+
+
+bool UInv_InventoryComponent::TryAddItemByManifest_NoUI(
+	FName ItemID,
+	const FInv_ItemManifest& Manifest,
+	int32 Quantity,
+	int32& OutRemainder)
+{
+	AActor* Owner = GetOwner();
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[AddNoUI] BEGIN Owner=%s Auth=%d ItemID=%s Qty=%d EntriesBefore=%d"),
+		*GetNameSafe(Owner),
+		Owner ? (int32)Owner->HasAuthority() : -1,
+		*ItemID.ToString(),
+		Quantity,
+		InventoryList.GetAllItems().Num()
+	);
+
+	OutRemainder = Quantity;
+
+	if (!Owner)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[AddNoUI] ABORT: Owner=null"));
+		return false;
+	}
+
+	if (ItemID.IsNone() || Quantity <= 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[AddNoUI] ABORT: Invalid ItemID or Qty (ItemID=%s Qty=%d)"),
+			*ItemID.ToString(), Quantity);
+		return false;
+	}
+
+	if (!Owner->HasAuthority())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[AddNoUI] ABORT: Not authority (Owner=%s)"), *GetNameSafe(Owner));
+		return false;
+	}
+
+	const FInv_StackableFragment* StackFrag =
+		Manifest.GetFragmentOfTypeWithTag<FInv_StackableFragment>(FragmentTags::StackableFragment);
+
+	const bool bStackable = (StackFrag != nullptr);
+
+	// Pre-state for this item
+	UInv_InventoryItem* Existing0 = InventoryList.FindFirstItemByID(ItemID);
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[AddNoUI] PreState ItemID=%s bStackable=%d Existing=%s ExistingTotalStack=%d TotalQtyByID=%d"),
+		*ItemID.ToString(),
+		(int32)bStackable,
+		*GetNameSafe(Existing0),
+		Existing0 ? Existing0->GetTotalStackCount() : -1,
+		GetTotalQuantityByItemID(ItemID)
+	);
+
+	OutRemainder = 0;
+
+	if (bStackable)
+	{
+		if (UInv_InventoryItem* Existing = InventoryList.FindFirstItemByID(ItemID))
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[AddNoUI] STACKABLE -> AddStacks ItemID=%s Add=%d ItemType=%s BeforeStack=%d"),
+				*ItemID.ToString(),
+				Quantity,
+				*Manifest.GetItemType().ToString(),
+				Existing->GetTotalStackCount()
+			);
+
+			Server_AddStacksToItemFromManifest(ItemID, Manifest.GetItemType(), Quantity);
+
+			UInv_InventoryItem* After = InventoryList.FindFirstItemByID(ItemID);
+			UE_LOG(LogTemp, Warning,
+				TEXT("[AddNoUI] STACKABLE After AddStacks Item=%s AfterStack=%d TotalQtyByID=%d"),
+				*GetNameSafe(After),
+				After ? After->GetTotalStackCount() : -1,
+				GetTotalQuantityByItemID(ItemID)
+			);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[AddNoUI] STACKABLE -> AddNew ItemID=%s StackCount=%d ItemType=%s"),
+				*ItemID.ToString(),
+				Quantity,
+				*Manifest.GetItemType().ToString()
+			);
+
+			Server_AddNewItemFromManifest(ItemID, Manifest, Quantity);
+
+			UInv_InventoryItem* After = InventoryList.FindFirstItemByID(ItemID);
+			UE_LOG(LogTemp, Warning,
+				TEXT("[AddNoUI] STACKABLE After AddNew Item=%s ItemID=%s AfterStack=%d TotalQtyByID=%d"),
+				*GetNameSafe(After),
+				After ? *After->GetItemID().ToString() : TEXT("<null>"),
+				After ? After->GetTotalStackCount() : -1,
+				GetTotalQuantityByItemID(ItemID)
+			);
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[AddNoUI] NON-STACKABLE -> loop create Qty=%d ItemID=%s"),
+			Quantity,
+			*ItemID.ToString()
+		);
+
+		for (int32 i = 0; i < Quantity; ++i)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[AddNoUI] NON-STACKABLE AddNew i=%d ItemID=%s StackCount=1"),
+				i,
+				*ItemID.ToString()
+			);
+
+			Server_AddNewItemFromManifest(ItemID, Manifest, 1);
+		}
+
+		UE_LOG(LogTemp, Warning,
+			TEXT("[AddNoUI] NON-STACKABLE After loop TotalQtyByID=%d"),
+			GetTotalQuantityByItemID(ItemID)
+		);
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[AddNoUI] END ItemID=%s EntriesAfter=%d TotalQtyByID=%d"),
+		*ItemID.ToString(),
+		InventoryList.GetAllItems().Num(),
+		GetTotalQuantityByItemID(ItemID)
+	);
+
+	// Dump current inventory snapshot (helps catch "multiple entries, each 1")
+	for (UInv_InventoryItem* It : InventoryList.GetAllItems())
+	{
+		if (!IsValid(It)) continue;
+
+		UE_LOG(LogTemp, Warning,
+			TEXT("[AddNoUI]   Entry Item=%s ItemID=%s TotalStack=%d"),
+			*GetNameSafe(It),
+			*It->GetItemID().ToString(),
+			It->GetTotalStackCount()
+		);
+	}
+
+	return true;
 }
 
 void UInv_InventoryComponent::ConstructInventory()
 {
-	OwningController = Cast<APlayerController>(GetOwner());
-	checkf(OwningController.IsValid(), TEXT("Inventory Component should have a Player Controller as Owner."));
-	if (!OwningController->IsLocalController()) return;
+	AActor* Owner = GetOwner();
+	if (!Owner) return;
 
-	InventoryMenu = CreateWidget<UInv_InventoryBase>(OwningController.Get(), InventoryMenuClass);
+	// Unified player path: owner can be PlayerController OR Pawn.
+	APlayerController* PC = Cast<APlayerController>(Owner);
+	if (!PC)
+	{
+		if (APawn* PawnOwner = Cast<APawn>(Owner))
+		{
+			PC = Cast<APlayerController>(PawnOwner->GetController());
+		}
+	}
+
+	// If still null => NPC pawn, server-owned actor, merchant actor, etc. No local UI here.
+	if (!IsValid(PC) || !PC->IsLocalController())
+	{
+		return;
+	}
+
+	OwningController = PC;
+
+	InventoryMenu = CreateWidget<UInv_InventoryBase>(PC, InventoryMenuClass);
 	if (!IsValid(InventoryMenu)) return;
 
 	InventoryMenu->AddToViewport();
 
-	// Only UI state; DO NOT set input mode here
 	InventoryMenu->SetVisibility(ESlateVisibility::Collapsed);
 	InventoryMenu->SetIsEnabled(false);
 	bInventoryMenuOpen = false;
+}
+
+void UInv_InventoryComponent::Server_InitializeMerchantStock_Implementation()
+{
 }
 
 void UInv_InventoryComponent::OpenInventoryMenu()

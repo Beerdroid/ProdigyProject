@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameStateBase.h"
+#include "Interfaces/Inv_ItemManifestProvider.h"
 #include "Items/Manifest/Inv_ItemManifest.h"   
 #include "ProdigyGameState.generated.h"
 
@@ -9,7 +10,7 @@ class UQuestDatabase;
 class UProdigyItemDatabase;
 
 UCLASS()
-class PRODIGYPROJECT_API AProdigyGameState : public AGameStateBase
+class PRODIGYPROJECT_API AProdigyGameState : public AGameStateBase, public IInv_ItemManifestProvider
 {
 	GENERATED_BODY()
 
@@ -21,9 +22,11 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Items")
 	TObjectPtr<UQuestDatabase> QuestDatabase;
 
-	// BP can call this to get a manifest by ID.
-	UFUNCTION(BlueprintCallable, BlueprintPure=false, Category="Items")
-	bool FindItemManifest(FName ItemID, FInv_ItemManifest& OutManifest) const;
+
+	virtual bool FindItemManifest_Implementation(
+	FName ItemID,
+	FInv_ItemManifest& OutManifest
+) const override;
 
 	UFUNCTION(BlueprintPure, Category="Quests")
 	UQuestDatabase* GetQuestDatabase() const { return QuestDatabase; }

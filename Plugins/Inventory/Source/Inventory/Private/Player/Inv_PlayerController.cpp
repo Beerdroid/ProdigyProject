@@ -105,6 +105,41 @@ void AInv_PlayerController::ToggleInventory()
 	}
 }
 
+void AInv_PlayerController::Server_StartTrade_Implementation(AActor* MerchantActor)
+{
+	if (!MerchantActor) return;
+
+	// Find inventory component on the merchant actor
+	UInv_InventoryComponent* MerchantInv = MerchantActor->FindComponentByClass<UInv_InventoryComponent>();
+	if (!MerchantInv) return;
+
+	// Lazy init (server only)
+	if (!MerchantInv->bInitialized) // use your own flag name
+	{
+		MerchantInv->Server_InitializeMerchantStock_Implementation(); // fills replicated content
+		MerchantInv->bInitialized = true;
+	}
+
+	// Push replication sooner
+	MerchantActor->ForceNetUpdate();
+
+	// Tell THIS client to open trade UI
+	// Client_OpenTradeUI(MerchantActor);
+}
+
+
+void AInv_PlayerController::Client_OpenMerchantTrade_Implementation(AActor* Merchant)
+{
+	if (!Merchant) return;
+
+	UInv_InventoryComponent* MerchantInv = Merchant->FindComponentByClass<UInv_InventoryComponent>();
+	if (!MerchantInv) return;
+
+	// Create widget + bind to MerchantInv
+	// Widget->BindMerchantInventory(MerchantInv);
+	// Widget->Open();
+}
+
 void AInv_PlayerController::PrimaryInteract()
 {
 	TryPrimaryPickup(ThisActor.Get());

@@ -5,7 +5,6 @@
 #include "GameFramework/Actor.h"
 #include "Interfaces/UInv_Interactable.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
-#include "Items/Components/Inv_ItemComponent.h"
 
 AProdigyPlayerController::AProdigyPlayerController()
 {
@@ -105,6 +104,19 @@ void AProdigyPlayerController::PrimaryInteract()
 		IInv_Interactable::Execute_Interact(InteractableComp, this, GetPawn());
 		return;
 	}
+}
+
+bool AProdigyPlayerController::AddItemByID_Implementation(FName ItemID, int32 Quantity, UObject* Context)
+{
+	if (!InventoryComponent.IsValid()) return false;
+
+	int32 Remainder = 0;
+	return InventoryComponent.Get()->AddItemByID_ServerAuth(ItemID, Quantity, Context, Remainder);
+}
+
+FOnQuestInventoryDelta& AProdigyPlayerController::GetInventoryDeltaDelegate()
+{
+	return DummyInventoryDelta;
 }
 
 void AProdigyPlayerController::Server_NotifyQuestsInventoryChanged_Implementation()

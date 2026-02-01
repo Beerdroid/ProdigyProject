@@ -50,16 +50,39 @@ bool UQuestIntegrationComponent::GetItemViewByID_Implementation(FName ItemID, FI
 
 bool UQuestIntegrationComponent::TryGetItemManifest(FName ItemID, FInv_ItemManifest& OutManifest) const
 {
-	OutManifest = FInv_ItemManifest();
-	if (ItemID.IsNone()) return false;
+	if (ItemID.IsNone())
+	{
+		return false;
+	}
 
-	const UWorld* World = GetWorld();
-	if (!World) return false;
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return false;
+	}
 
-	const AProdigyGameState* GS = World->GetGameState<AProdigyGameState>();
-	if (!GS) return false;
+	AGameStateBase* GS = World->GetGameState();
+	if (!GS)
+	{
+		return false;
+	}
 
-	return GS->FindItemManifest(ItemID, OutManifest);
+	if (!GS->GetClass()->ImplementsInterface(UInv_ItemManifestProvider::StaticClass()))
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[QuestIntegration] GameState=%s does not implement Inv_ItemManifestProvider"),
+			*GetNameSafe(GS));
+		return false;
+	}
+
+	const bool bOk = IInv_ItemManifestProvider::Execute_FindItemManifest(GS, ItemID, OutManifest);
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[QuestIntegration] FindItemManifest ItemID=%s -> %d"),
+		*ItemID.ToString(),
+		(int32)bOk);
+
+	return bOk;
 }
 
 void UQuestIntegrationComponent::BroadcastInventoryDelta(FName ItemID, int32 DeltaQty, UObject* Context)

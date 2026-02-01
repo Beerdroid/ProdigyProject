@@ -19,6 +19,18 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FItemEquipStatusChanged, UInv_Invent
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInventoryMenuToggled, bool, bOpen);
 DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnInvDeltaNative, FName /*ItemID*/, int32 /*DeltaQty*/, UObject* /*Context*/);
 
+USTRUCT(BlueprintType)
+struct FInv_PredefinedItemEntry
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly)
+	FName ItemID = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(ClampMin="1"))
+	int32 Quantity = 1;
+};
+
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent), Blueprintable)
 class INVENTORY_API UInv_InventoryComponent : public UActorComponent
 {
@@ -39,6 +51,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Inventory")
 	void TryAddItem(UInv_ItemComponent* ItemComponent);
+
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Inventory")
+	bool AddItemByID_ServerAuth(FName ItemID, int32 Quantity, UObject* Context, int32& OutRemainder);
 
 	UFUNCTION(Server, Reliable)
 	void Server_AddNewItem(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder);
@@ -89,6 +104,11 @@ public:
 	FInventoryMenuToggled OnInventoryMenuToggled;
 	FOnInvDeltaNative OnInvDelta;
 
+	UPROPERTY(Replicated)
+	bool bInitialized = false;
+
+	UPROPERTY(EditAnywhere, Category="Inventory|Predefined")
+	TArray<FInv_PredefinedItemEntry> PredefinedItems;
 	
 protected:
 	virtual void BeginPlay() override;
@@ -96,8 +116,18 @@ protected:
 private:
 
 	TWeakObjectPtr<APlayerController> OwningController;
+
+	bool ResolveManifestByItemID(FName ItemID, FInv_ItemManifest& OutManifest) const;
+
+	UFUNCTION(Server, Reliable)
+	void Server_InitializeFromPredefinedItems();
+
+	bool TryAddItemByManifest_NoUI(FName ItemID, const FInv_ItemManifest& Manifest, int32 Quantity, int32& OutRemainder);
 	
 	void ConstructInventory();
+	
+	UFUNCTION(Server, Reliable)
+	void Server_InitializeMerchantStock();
 
 	UPROPERTY(Replicated)
 	FInv_InventoryFastArray InventoryList;

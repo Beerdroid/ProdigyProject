@@ -2,6 +2,15 @@
 
 #include "Data/DataBase/ProdigyItemDatabase.h"
 
+bool AProdigyGameState::FindItemManifest_Implementation(FName ItemID, FInv_ItemManifest& OutManifest) const
+{
+	if (!ItemDatabase)
+	{
+		return false;
+	}
+	return ItemDatabase->FindManifest(ItemID, OutManifest);
+}
+
 void AProdigyGameState::BeginPlay()
 {
 	Super::BeginPlay();
@@ -11,13 +20,4 @@ void AProdigyGameState::BeginPlay()
 	{
 		ItemDatabase->BuildCacheIfNeeded();
 	}
-}
-
-bool AProdigyGameState::FindItemManifest(FName ItemID, FInv_ItemManifest& OutManifest) const
-{
-	if (!ItemDatabase)
-	{
-		return false;
-	}
-	return ItemDatabase->FindManifest(ItemID, OutManifest);
 }

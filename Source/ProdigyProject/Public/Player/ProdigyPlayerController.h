@@ -5,13 +5,15 @@
 #include "CoreMinimal.h"
 #include "Player/Inv_PlayerController.h"
 #include "GameplayTagContainer.h"
+#include "Quest/Interfaces/QuestInventoryProvider.h"
 #include "ProdigyPlayerController.generated.h"
 
 class UQuestLogComponent;
 class UQuestIntegrationComponent;
 
+
 UCLASS()
-class PRODIGYPROJECT_API AProdigyPlayerController : public AInv_PlayerController
+class PRODIGYPROJECT_API AProdigyPlayerController : public AInv_PlayerController, public IQuestInventoryProvider
 {
 	GENERATED_BODY()
 
@@ -43,6 +45,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Interaction")
 	virtual void PrimaryInteract() override;
 
+	virtual bool AddItemByID_Implementation(FName ItemID, int32 Quantity, UObject* Context) override;
+
+	virtual FOnQuestInventoryDelta& GetInventoryDeltaDelegate() override;
+
 
 protected:
 	// Add in BP child if you prefer; these will auto-find if present.
@@ -54,4 +60,6 @@ protected:
 
 private:
 	void CacheQuestComponents();
+	
+	FOnQuestInventoryDelta DummyInventoryDelta;
 };
