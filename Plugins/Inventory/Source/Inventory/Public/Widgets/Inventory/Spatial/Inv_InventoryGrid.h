@@ -37,6 +37,21 @@ public:
 	FInv_SlotAvailabilityResult HasRoomForItem(FName ItemID, const UInv_InventoryItem* Item, int32 StackAmountOverride = -1);
 	FInv_SlotAvailabilityResult HasRoomForItem(const UInv_ItemComponent* ItemComponent);
 	FInv_SlotAvailabilityResult HasRoomForItem(const UInv_InventoryItem* Item, int32 StackAmountOverride = -1);
+
+	UFUNCTION(BlueprintCallable, Category="Inventory")
+	void SetInventoryComponent(UInv_InventoryComponent* InComp);
+
+	void BindToInventory(UInv_InventoryComponent* InComp);
+	void UnbindFromInventory();
+
+	void RebuildFromSnapshot();
+
+	UPROPERTY(EditAnywhere, Category="Inventory")
+	bool bAutoBindToOwningPlayerInventory = true;
+
+	bool bGridBuilt = false;
+	bool bSnapshotApplied = false;
+	bool bIsPlayerOwnedInventory = false;
 	
 	void ShowCursor();
 	void HideCursor();

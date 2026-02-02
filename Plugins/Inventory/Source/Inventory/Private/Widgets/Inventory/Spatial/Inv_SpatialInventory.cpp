@@ -320,6 +320,23 @@ float UInv_SpatialInventory::GetTileSize() const
 	return Grid_Equippables->GetTileSize();
 }
 
+void UInv_SpatialInventory::SetSourceInventory(UInv_InventoryComponent* InInventory)
+{
+	UE_LOG(LogTemp, Warning, TEXT("SetSourceInventory start"));
+	Super::SetSourceInventory(InInventory);
+
+	if (!IsValid(SourceInventory)) return;
+
+	if (IsValid(Grid_Equippables))  Grid_Equippables->SetInventoryComponent(SourceInventory);
+	if (IsValid(Grid_Consumables))  Grid_Consumables->SetInventoryComponent(SourceInventory);
+	if (IsValid(Grid_Craftables))   Grid_Craftables->SetInventoryComponent(SourceInventory);
+
+	// Optional: ensure ActiveGrid points at the currently visible grid
+	// ActiveGrid = Grid_Equippables; (or whatever Switcher index is)
+	UE_LOG(LogTemp, Warning, TEXT("SetSourceInventory end"));
+	
+}
+
 void UInv_SpatialInventory::ShowEquippedItemDescription(UInv_InventoryItem* Item)
 {
 	const auto& Manifest = Item->GetItemManifest();

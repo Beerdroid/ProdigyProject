@@ -35,6 +35,9 @@ public:
 	virtual bool HasHoverItem() const override;
 	virtual UInv_HoverItem* GetHoverItem() const override;
 	virtual float GetTileSize() const override;
+
+	// Inv_SpatialInventory.h
+	virtual void SetSourceInventory(UInv_InventoryComponent* InInventory) override;
 private:
 
 	UPROPERTY()

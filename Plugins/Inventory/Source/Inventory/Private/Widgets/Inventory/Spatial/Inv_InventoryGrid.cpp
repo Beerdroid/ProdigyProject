@@ -20,18 +20,139 @@
 #include "Widgets/Inventory/SlottedItems/Inv_SlottedItem.h"
 #include "Widgets/ItemPopUp/Inv_ItemPopUp.h"
 
+static bool IsInventoryOwnedByOwningPlayer(const UUserWidget* Widget, const UInv_InventoryComponent* IC)
+{
+	if (!IsValid(Widget) || !IsValid(IC)) return false;
+
+	const APlayerController* WidgetPC = Widget->GetOwningPlayer();
+	const AActor* InvOwner = IC->GetOwner();
+	if (!IsValid(WidgetPC) || !IsValid(InvOwner)) return false;
+
+	// Case 1: inventory on the controller
+	if (InvOwner == WidgetPC) return true;
+
+	// Case 2: inventory on the pawn
+	if (const APawn* WidgetPawn = WidgetPC->GetPawn())
+	{
+		if (InvOwner == WidgetPawn) return true;
+	}
+
+	// Case 3: inventory on something "owned" by the controller/pawn
+	// (optional; only if you use SetOwner() meaningfully)
+	if (InvOwner->GetOwner() == WidgetPC) return true;
+	if (const APawn* WidgetPawn = WidgetPC->GetPawn())
+	{
+		if (InvOwner->GetOwner() == WidgetPawn) return true;
+	}
+
+	return false;
+}
+
 void UInv_InventoryGrid::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 
 	ConstructGrid();
 
+	// If someone already set InventoryComponent (external), use it.
+	if (InventoryComponent.IsValid())
+	{
+		BindToInventory(InventoryComponent.Get());
+		RebuildFromSnapshot();
+		return;
+	}
+
+	// Otherwise default to player inventory
 	InventoryComponent = UInv_InventoryStatics::GetInventoryComponent(GetOwningPlayer());
-	InventoryComponent->OnItemAdded.AddDynamic(this, &ThisClass::AddItem);
-	InventoryComponent->OnStackChange.AddDynamic(this, &ThisClass::AddStacks);
-	InventoryComponent->OnInventoryMenuToggled.AddDynamic(this, &ThisClass::OnInventoryMenuToggled);
-	InventoryComponent->OnItemRemoved.AddDynamic(this, &ThisClass::HandleItemRemoved);
-	InventoryComponent->OnInvDelta.AddUObject(this, &ThisClass::HandleInvDelta);
+	if (!InventoryComponent.IsValid()) return;
+
+	BindToInventory(InventoryComponent.Get());
+	RebuildFromSnapshot();
+}
+
+void UInv_InventoryGrid::SetInventoryComponent(UInv_InventoryComponent* InComp)
+{
+	if (InventoryComponent.Get() == InComp) return;
+
+	UnbindFromInventory();
+	InventoryComponent = InComp;
+	if (!InventoryComponent.IsValid()) return;
+
+	const bool bIsPlayerInv = IsInventoryOwnedByOwningPlayer(this, InventoryComponent.Get());
+	bIsPlayerOwnedInventory = bIsPlayerInv; // store a bool on the grid
+
+	BindToInventory(InventoryComponent.Get());
+	RebuildFromSnapshot();
+}
+
+void UInv_InventoryGrid::BindToInventory(UInv_InventoryComponent* InComp)
+{
+    if (!IsValid(InComp)) return;
+
+    // always remove first to avoid duplicate binds
+    InComp->OnItemAdded.RemoveDynamic(this, &ThisClass::AddItem);
+    InComp->OnItemAdded.AddDynamic(this, &ThisClass::AddItem);
+
+    InComp->OnStackChange.RemoveDynamic(this, &ThisClass::AddStacks);
+    InComp->OnStackChange.AddDynamic(this, &ThisClass::AddStacks);
+
+    InComp->OnInventoryMenuToggled.RemoveDynamic(this, &ThisClass::OnInventoryMenuToggled);
+    InComp->OnInventoryMenuToggled.AddDynamic(this, &ThisClass::OnInventoryMenuToggled);
+
+    InComp->OnItemRemoved.RemoveDynamic(this, &ThisClass::HandleItemRemoved);
+    InComp->OnItemRemoved.AddDynamic(this, &ThisClass::HandleItemRemoved);
+
+    InComp->OnInvDelta.RemoveAll(this);
+    InComp->OnInvDelta.AddUObject(this, &ThisClass::HandleInvDelta);
+}
+
+void UInv_InventoryGrid::UnbindFromInventory()
+{
+    if (!InventoryComponent.IsValid()) return;
+
+    InventoryComponent->OnItemAdded.RemoveDynamic(this, &ThisClass::AddItem);
+    InventoryComponent->OnStackChange.RemoveDynamic(this, &ThisClass::AddStacks);
+    InventoryComponent->OnInventoryMenuToggled.RemoveDynamic(this, &ThisClass::OnInventoryMenuToggled);
+    InventoryComponent->OnItemRemoved.RemoveDynamic(this, &ThisClass::HandleItemRemoved);
+    InventoryComponent->OnInvDelta.RemoveAll(this);
+}
+
+void UInv_InventoryGrid::RebuildFromSnapshot()
+{
+	if (!bGridBuilt || !InventoryComponent.IsValid())
+		return;
+
+	// Clear only visuals we own (slotted widgets), keep GridSlots array
+	for (auto& KVP : SlottedItems)
+	{
+		if (IsValid(KVP.Value))
+		{
+			KVP.Value->RemoveFromParent();
+		}
+	}
+	SlottedItems.Empty();
+
+	// Reset slot state (NO popup touching here)
+	for (UInv_GridSlot* GridSlot : GridSlots)
+	{
+		if (!IsValid(Slot)) continue;
+
+		GridSlot->SetInventoryItem(nullptr);
+		GridSlot->SetUpperLeftIndex(INDEX_NONE);
+		GridSlot->SetAvailable(true);
+		GridSlot->SetStackCount(0);
+		GridSlot->SetUnoccupiedTexture();
+	}
+
+	// Now rebuild from the inventory's current state
+	const TArray<UInv_InventoryItem*> Items = InventoryComponent->GetAllItems(); // or whatever you have
+	for (UInv_InventoryItem* Item : Items)
+	{
+		if (!IsValid(Item)) continue;
+		AddItem(Item);
+	}
+
+	bSnapshotApplied = true;
 }
 
 void UInv_InventoryGrid::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)

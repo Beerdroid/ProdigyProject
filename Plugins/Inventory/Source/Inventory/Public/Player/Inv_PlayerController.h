@@ -29,12 +29,17 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category="Interaction")
 	AActor* GetHoveredActor() const { return ThisActor.Get(); }
 	
-	UFUNCTION(Server, Reliable)
+	UFUNCTION(BlueprintCallable, Server, Reliable)
 	void Server_StartTrade(AActor* MerchantActor);
 
-	UFUNCTION(Client, Reliable)
+	UFUNCTION(BlueprintCallable, Client, Reliable)
 	void Client_OpenMerchantTrade(AActor* Merchant);
 
+	UFUNCTION(Server, Reliable)
+	void Server_BuyFromMerchant(AActor* MerchantActor, FName ItemID, int32 Quantity);
+
+	UFUNCTION(Server, Reliable)
+	void Server_SellToMerchant(AActor* MerchantActor, FName ItemID, int32 Quantity);
 
 
 protected:

@@ -83,6 +83,8 @@ public:
 	UInv_InventoryBase* GetInventoryMenu() const { return InventoryMenu; }
 	bool IsMenuOpen() const { return bInventoryMenuOpen; }
 
+	void SyncExternalInventoryToUI();
+
 	void SetItemID(FName InItemID);
 	void EmitInvDeltaByItemID(FName ItemID, int32 DeltaQty, UObject* Context);
 	FName ResolveItemIDFromManifest(const FInv_ItemManifest& Manifest) const;
@@ -107,8 +109,32 @@ public:
 	UPROPERTY(Replicated)
 	bool bInitialized = false;
 
+	UPROPERTY(Replicated)
+	bool bPredefinedApplied = false;
+
 	UPROPERTY(Replicated, EditAnywhere, Category="Inventory|Predefined")
 	TArray<FInv_PredefinedItemEntry> PredefinedItems;
+
+	UFUNCTION(Server, Reliable)
+	void Server_InitializeFromPredefinedItems();
+
+	TArray<UInv_InventoryItem*> GetAllItems();
+
+	void EnsureExternalInventoryMenuCreated();
+
+	UFUNCTION(BlueprintCallable, Category="Inventory|UI")
+	void OpenExternalInventoryUI(UInv_InventoryComponent* InExternal);
+
+	UFUNCTION(BlueprintCallable, Category="Inventory|UI")
+	void CloseExternalInventoryUI();
+
+	void ApplyGameOnlyInputMode();
+
+	UFUNCTION(BlueprintCallable, Category="Inventory|Predefined")
+	void EnsurePredefinedApplied();
+
+	UFUNCTION(BlueprintCallable, Category="Inventory|UI")
+	void ReplayInventoryToUI();
 	
 protected:
 	virtual void BeginPlay() override;
@@ -123,10 +149,11 @@ private:
 
 	bool ResolveManifestByItemID(FName ItemID, FInv_ItemManifest& OutManifest) const;
 
-	UFUNCTION(Server, Reliable)
-	void Server_InitializeFromPredefinedItems();
+
 
 	bool TryAddItemByManifest_NoUI(FName ItemID, const FInv_ItemManifest& Manifest, int32 Quantity, int32& OutRemainder);
+
+	void ApplyGameAndUIInputMode();
 	
 	void ConstructInventory();
 	
@@ -141,6 +168,16 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Inventory")
 	TSubclassOf<UInv_InventoryBase> InventoryMenuClass;
+
+	UPROPERTY()
+	TObjectPtr<UInv_InventoryBase> ExternalInventoryMenu = nullptr;
+
+	UPROPERTY(EditAnywhere, Category="Inventory|UI")
+	TSubclassOf<UInv_InventoryBase> ExternalInventoryMenuClass;
+
+	UPROPERTY()
+	TObjectPtr<UInv_InventoryComponent> ExternalInventoryComp = nullptr;
+
 
 	bool bInventoryMenuOpen;
 	void OpenInventoryMenu();

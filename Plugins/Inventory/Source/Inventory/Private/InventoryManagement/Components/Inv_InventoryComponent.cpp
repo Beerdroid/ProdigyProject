@@ -455,6 +455,13 @@ void UInv_InventoryComponent::SpawnDroppedItem(UInv_InventoryItem* Item, int32 S
 }
 
 
+void UInv_InventoryComponent::SyncExternalInventoryToUI()
+{
+	if (!IsValid(ExternalInventoryMenu) || !IsValid(ExternalInventoryComp)) return;
+
+	ExternalInventoryMenu->SetSourceInventory(ExternalInventoryComp.Get());
+}
+
 void UInv_InventoryComponent::EmitInvDeltaByItemID(FName ItemID, int32 DeltaQty, UObject* Context)
 {
 	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
@@ -517,14 +524,195 @@ void UInv_InventoryComponent::AddRepSubObj(UObject* SubObj)
 	}
 }
 
+TArray<UInv_InventoryItem*> UInv_InventoryComponent::GetAllItems()
+{
+	return InventoryList.GetAllItems();
+}
+
+void UInv_InventoryComponent::EnsureExternalInventoryMenuCreated()
+{
+	if (!OwningController.IsValid()) return;
+
+	if (IsValid(ExternalInventoryMenu))
+	{
+		return;
+	}
+
+	TSubclassOf<UInv_InventoryBase> WidgetClass =
+		ExternalInventoryMenuClass ? ExternalInventoryMenuClass : InventoryMenuClass;
+
+	if (!WidgetClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InvUI] ExternalInventoryMenuClass and InventoryMenuClass are null"));
+		return;
+	}
+
+	ExternalInventoryMenu = CreateWidget<UInv_InventoryBase>(OwningController.Get(), WidgetClass);
+	if (!IsValid(ExternalInventoryMenu))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[InvUI] Failed to CreateWidget ExternalInventoryMenu"));
+		return;
+	}
+
+	ExternalInventoryMenu->AddToViewport();
+	ExternalInventoryMenu->SetVisibility(ESlateVisibility::Collapsed);
+	ExternalInventoryMenu->SetIsEnabled(false);
+
+	UE_LOG(LogTemp, Warning, TEXT("[InvUI] ExternalInventoryMenu created: %s"), *GetNameSafe(ExternalInventoryMenu));
+}
+
+void UInv_InventoryComponent::OpenExternalInventoryUI(UInv_InventoryComponent* InExternal)
+{
+	UE_LOG(LogTemp, Warning, TEXT("OpenExternalInventoryUI started"));
+
+	if (!OwningController.IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("OpenExternalInventoryUI abort: OwningController invalid"));
+		return;
+	}
+	if (!IsValid(InExternal))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("OpenExternalInventoryUI abort: InExternal invalid"));
+		return;
+	}
+
+	ExternalInventoryComp = InExternal;
+
+	// Ensure player menu exists
+	if (!IsValid(InventoryMenu))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("OpenExternalInventoryUI: InventoryMenu invalid -> ConstructInventory"));
+		ConstructInventory();
+	}
+	if (!IsValid(InventoryMenu))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("OpenExternalInventoryUI abort: InventoryMenu still invalid"));
+		return;
+	}
+
+	// ✅ Create external menu lazily (do NOT return)
+	EnsureExternalInventoryMenuCreated();
+	if (!IsValid(ExternalInventoryMenu))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("OpenExternalInventoryUI abort: ExternalInventoryMenu invalid after Ensure"));
+		return;
+	}
+
+	ExternalInventoryMenu->SetSourceInventory(ExternalInventoryComp);
+
+	ExternalInventoryComp->ReplayInventoryToUI();
+
+	InventoryMenu->SetIsEnabled(true);
+	InventoryMenu->SetVisibility(ESlateVisibility::Visible);
+
+	ExternalInventoryMenu->SetIsEnabled(true);
+	ExternalInventoryMenu->SetVisibility(ESlateVisibility::Visible);
+
+	bInventoryMenuOpen = true;
+
+	ApplyGameAndUIInputMode();
+
+	UE_LOG(LogTemp, Warning, TEXT("OpenExternalInventoryUI completed"));
+}
+
+void UInv_InventoryComponent::CloseExternalInventoryUI()
+{
+	if (!OwningController.IsValid()) return;
+
+	// Hide external menu if exists
+	if (IsValid(ExternalInventoryMenu))
+	{
+		ExternalInventoryMenu->SetVisibility(ESlateVisibility::Collapsed);
+		ExternalInventoryMenu->SetIsEnabled(false);
+
+		// Important: unbind if you implemented it in widget
+		ExternalInventoryMenu->SetSourceInventory(nullptr);
+	}
+
+	ExternalInventoryComp = nullptr;
+
+	// If you want to keep player inventory open, don’t touch InventoryMenu.
+	// If trade UI should close BOTH, hide InventoryMenu too:
+	if (IsValid(InventoryMenu))
+	{
+		InventoryMenu->SetVisibility(ESlateVisibility::Collapsed);
+		InventoryMenu->SetIsEnabled(false);
+	}
+
+	bInventoryMenuOpen = false;
+
+	ApplyGameOnlyInputMode();
+}
+
+void UInv_InventoryComponent::ApplyGameOnlyInputMode()
+{
+	if (!OwningController.IsValid()) return;
+
+	FInputModeGameAndUI InputMode;
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	InputMode.SetHideCursorDuringCapture(false);
+
+	OwningController->SetInputMode(InputMode);
+	OwningController->SetShowMouseCursor(true);
+
+	if (GEngine && GEngine->GameViewport)
+	{
+		GEngine->GameViewport->SetMouseCaptureMode(EMouseCaptureMode::NoCapture);
+		GEngine->GameViewport->SetHideCursorDuringCapture(false);
+	}
+}
+
+void UInv_InventoryComponent::EnsurePredefinedApplied()
+{
+	UE_LOG(LogTemp, Warning, TEXT("EnsurePredefinedApplied started"));
+
+	AActor* Owner = GetOwner();
+	if (!IsValid(Owner) || !Owner->HasAuthority()) return;
+
+	if (bPredefinedApplied) return;
+
+	// Nothing to do, but we still want to stop retrying forever.
+	if (PredefinedItems.Num() == 0)
+	{
+		bPredefinedApplied = true;
+		Owner->FlushNetDormancy();
+		Owner->ForceNetUpdate();
+		return;
+	}
+
+	Server_InitializeFromPredefinedItems_Implementation();
+
+	// Mark AFTER initialization.
+	bPredefinedApplied = true;
+
+	UE_LOG(LogTemp, Warning, TEXT("EnsurePredefinedApplied completed"));
+}
+
+void UInv_InventoryComponent::ReplayInventoryToUI()
+{
+	const TArray<UInv_InventoryItem*> Items = InventoryList.GetAllItems();
+
+	UE_LOG(LogTemp, Warning, TEXT("[InvUI] ReplayInventoryToUI Owner=%s Items=%d"),
+		*GetNameSafe(GetOwner()), Items.Num());
+
+	for (UInv_InventoryItem* Item : Items)
+	{
+		if (!IsValid(Item)) continue;
+
+		UE_LOG(LogTemp, Warning, TEXT("[InvUI]  Replay Item=%s ItemID=%s Stack=%d"),
+			*GetNameSafe(Item),
+			*Item->GetItemID().ToString(),
+			Item->GetTotalStackCount());
+
+		OnItemAdded.Broadcast(Item);
+	}
+}
+
 void UInv_InventoryComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// keep this so client can show inventory when it arrives
-	ConstructInventory();
-
-	// critical for client-side fastarray callbacks
+	ConstructInventory();              // player local UI only
 	InventoryList.OwnerComponent = this;
 }
 
@@ -532,19 +720,22 @@ void UInv_InventoryComponent::ReadyForReplication()
 {
 	Super::ReadyForReplication();
 
+	InventoryList.OwnerComponent = this;
+
 	AActor* Owner = GetOwner();
 	if (!Owner || !Owner->HasAuthority()) return;
-	if (bInitialized) return;
 
-	// If you rely on AddReplicatedSubObject, you want this to be true here.
+	if (bInitialized) return;
 	if (!IsReadyForReplication()) return;
 
-	UE_LOG(LogTemp, Warning, TEXT("[PredefInit] ReadyForReplication Owner=%s"), *GetNameSafe(Owner));
+	UE_LOG(LogTemp, Warning, TEXT("[InvInit] ReadyForReplication Seed Owner=%s"), *GetNameSafe(Owner));
 
-	// Call implementation directly (no RPC / ownership weirdness)
 	Server_InitializeFromPredefinedItems_Implementation();
 
 	bInitialized = true;
+
+	Owner->FlushNetDormancy();
+	Owner->ForceNetUpdate();
 }
 
 void UInv_InventoryComponent::SyncInventoryToUI()
@@ -587,14 +778,9 @@ bool UInv_InventoryComponent::ResolveManifestByItemID(FName ItemID, FInv_ItemMan
 
 void UInv_InventoryComponent::Server_InitializeFromPredefinedItems_Implementation()
 {
+	UE_LOG(LogTemp, Warning, TEXT("Server_InitializeFromPredefinedItems started"));
 	AActor* Owner = GetOwner();
 	if (!Owner || !Owner->HasAuthority()) return;
-
-	// IMPORTANT:
-	// Do NOT reuse this flag for UI construction.
-	// This flag strictly means "predefined items already applied".
-	if (bInitialized) return;
-	bInitialized = true;
 
 	if (PredefinedItems.Num() == 0) return;
 
@@ -647,6 +833,10 @@ void UInv_InventoryComponent::Server_InitializeFromPredefinedItems_Implementatio
 
 }
 
+
+void UInv_InventoryComponent::Server_InitializeMerchantStock_Implementation()
+{
+}
 
 bool UInv_InventoryComponent::TryAddItemByManifest_NoUI(
 	FName ItemID,
@@ -796,6 +986,24 @@ bool UInv_InventoryComponent::TryAddItemByManifest_NoUI(
 	return true;
 }
 
+void UInv_InventoryComponent::ApplyGameAndUIInputMode()
+{
+	if (!OwningController.IsValid()) return;
+
+	FInputModeGameAndUI InputMode;
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	InputMode.SetHideCursorDuringCapture(false);
+
+	OwningController->SetInputMode(InputMode);
+	OwningController->SetShowMouseCursor(true);
+
+	if (GEngine && GEngine->GameViewport)
+	{
+		GEngine->GameViewport->SetMouseCaptureMode(EMouseCaptureMode::NoCapture);
+		GEngine->GameViewport->SetHideCursorDuringCapture(false);
+	}
+}
+
 void UInv_InventoryComponent::ConstructInventory()
 {
 	AActor* Owner = GetOwner();
@@ -831,9 +1039,6 @@ void UInv_InventoryComponent::ConstructInventory()
 	SyncInventoryToUI();
 }
 
-void UInv_InventoryComponent::Server_InitializeMerchantStock_Implementation()
-{
-}
 
 void UInv_InventoryComponent::OpenInventoryMenu()
 {

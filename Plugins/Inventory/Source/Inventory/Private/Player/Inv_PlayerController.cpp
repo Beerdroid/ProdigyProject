@@ -29,6 +29,85 @@ void AInv_PlayerController::Tick(float DeltaTime)
 	// TraceForItem();
 }
 
+void AInv_PlayerController::Server_BuyFromMerchant_Implementation(AActor* MerchantActor, FName ItemID, int32 Quantity)
+{
+	if (!IsValid(MerchantActor) || ItemID.IsNone() || Quantity <= 0) return;
+	if (!InventoryComponent.IsValid()) return;
+
+	UInv_InventoryComponent* MerchantInv = MerchantActor->FindComponentByClass<UInv_InventoryComponent>();
+	if (!IsValid(MerchantInv)) return;
+
+	// 1) Verify merchant has stock
+	const int32 MerchantQty = MerchantInv->GetTotalQuantityByItemID(ItemID);
+	if (MerchantQty < Quantity) return;
+
+	// 2) Compute price (you need a price source — typically a fragment like SellValue/BuyValue)
+	// For now: TODO
+	const int32 TotalPrice = /*ResolveBuyPrice(ItemID)*/ 1 * Quantity;
+
+	// 3) Check player money
+	// if (!TrySpendMoney(TotalPrice)) return;
+
+	// 4) Add item to player inventory (server-side)
+	int32 Remainder = 0;
+	const bool bAdded = InventoryComponent->AddItemByID_ServerAuth(ItemID, Quantity, MerchantActor, Remainder);
+
+	const int32 ActuallyAdded = Quantity - Remainder;
+	if (!bAdded || ActuallyAdded <= 0)
+	{
+		// Refund full amount if nothing added; if partial is allowed, refund the remainder portion.
+		// AddMoney(TotalPrice);
+		return;
+	}
+
+	// 5) Remove items from merchant for amount actually added
+	MerchantInv->Server_RemoveItemByID(ItemID, ActuallyAdded, this);
+
+	// 6) Refund for remainder if partial add happened
+	if (Remainder > 0)
+	{
+		const int32 Refund = /*UnitPrice*/ 1 * Remainder;
+		// AddMoney(Refund);
+	}
+}
+
+void AInv_PlayerController::Server_SellToMerchant_Implementation(AActor* MerchantActor, FName ItemID, int32 Quantity)
+{
+	if (!IsValid(MerchantActor) || ItemID.IsNone() || Quantity <= 0) return;
+	if (!InventoryComponent.IsValid()) return;
+
+	UInv_InventoryComponent* MerchantInv = MerchantActor->FindComponentByClass<UInv_InventoryComponent>();
+	if (!IsValid(MerchantInv)) return;
+
+	// 1) Verify player has item
+	const int32 PlayerQty = InventoryComponent->GetTotalQuantityByItemID(ItemID);
+	if (PlayerQty < Quantity) return;
+
+	// 2) Price (sell price)
+	const int32 TotalGain = /*ResolveSellPrice(ItemID)*/ 1 * Quantity;
+
+	// 3) Remove from player
+	InventoryComponent->Server_RemoveItemByID(ItemID, Quantity, MerchantActor);
+
+	// 4) Add to merchant
+	int32 Remainder = 0;
+	MerchantInv->AddItemByID_ServerAuth(ItemID, Quantity, this, Remainder);
+
+	// If merchant has capacity limits later, handle remainder:
+	// - if remainder > 0: give back items to player OR drop them OR just don’t allow sell.
+	if (Remainder > 0)
+	{
+		// safest: give back
+		int32 GiveBackRemainder = 0;
+		InventoryComponent->AddItemByID_ServerAuth(ItemID, Remainder, this, GiveBackRemainder);
+		// If GiveBackRemainder > 0 here, you’ve got bigger capacity issues — decide policy.
+		return;
+	}
+
+	// 5) Pay player
+	// AddMoney(TotalGain);
+}
+
 void AInv_PlayerController::BeginPlay()
 {
 	Super::BeginPlay();
@@ -107,37 +186,33 @@ void AInv_PlayerController::ToggleInventory()
 
 void AInv_PlayerController::Server_StartTrade_Implementation(AActor* MerchantActor)
 {
-	if (!MerchantActor) return;
+	UE_LOG(LogTemp, Warning, TEXT("Server_StartTrade"));
+	if (!IsValid(MerchantActor)) return;
 
-	// Find inventory component on the merchant actor
 	UInv_InventoryComponent* MerchantInv = MerchantActor->FindComponentByClass<UInv_InventoryComponent>();
-	if (!MerchantInv) return;
+	if (!IsValid(MerchantInv)) return;
 
-	// Lazy init (server only)
-	if (!MerchantInv->bInitialized) // use your own flag name
-	{
-		MerchantInv->Server_InitializeMerchantStock_Implementation(); // fills replicated content
-		MerchantInv->bInitialized = true;
-	}
+	UE_LOG(LogTemp, Warning, TEXT("MerchantInv flags: bInitialized=%d Owner=%s NetMode=%d"),
+	(int32)MerchantInv->bInitialized,
+	*GetNameSafe(MerchantInv->GetOwner()),
+	(int32)(MerchantInv->GetOwner() ? MerchantInv->GetOwner()->GetNetMode() : NM_MAX)
+);
 
-	// Push replication sooner
-	MerchantActor->ForceNetUpdate();
-
-	// Tell THIS client to open trade UI
-	// Client_OpenTradeUI(MerchantActor);
+	Client_OpenMerchantTrade(MerchantActor);
+	UE_LOG(LogTemp, Warning, TEXT("Server_StartTrade completed"));
 }
 
 
 void AInv_PlayerController::Client_OpenMerchantTrade_Implementation(AActor* Merchant)
 {
-	if (!Merchant) return;
+	UE_LOG(LogTemp, Warning, TEXT("Client_OpenMerchantTrade completed"));
+	if (!IsValid(Merchant) || !InventoryComponent.IsValid()) return;
 
 	UInv_InventoryComponent* MerchantInv = Merchant->FindComponentByClass<UInv_InventoryComponent>();
-	if (!MerchantInv) return;
+	if (!IsValid(MerchantInv)) return;
 
-	// Create widget + bind to MerchantInv
-	// Widget->BindMerchantInventory(MerchantInv);
-	// Widget->Open();
+	// This opens player inventory menu + external menu bound to merchant inv
+	InventoryComponent->OpenExternalInventoryUI(MerchantInv);
 }
 
 void AInv_PlayerController::PrimaryInteract()

@@ -15,6 +15,12 @@ UInv_InventoryComponent* UInv_InventoryStatics::GetInventoryComponent(const APla
 	return InventoryComponent;
 }
 
+UInv_InventoryComponent* UInv_InventoryStatics::GetInventoryComponentFromActor(const AActor* Actor)
+{
+	if (!IsValid(Actor)) return nullptr;
+	return Actor->FindComponentByClass<UInv_InventoryComponent>();
+}
+
 EInv_ItemCategory UInv_InventoryStatics::GetItemCategoryFromItemComp(UInv_ItemComponent* ItemComp)
 {
 	if (!IsValid(ItemComp)) return EInv_ItemCategory::None;

@@ -25,6 +25,32 @@ public:
 		return FInv_SlotAvailabilityResult();
 	}
 	
+	UFUNCTION(BlueprintCallable, Category="Inventory|UI")
+	UInv_InventoryGrid* GetInventoryGrid() const { return InventoryGrid; }
+
+	UPROPERTY(meta=(BindWidgetOptional))
+	TObjectPtr<UInv_InventoryGrid> InventoryGrid = nullptr;
+	
+	UFUNCTION(BlueprintCallable, Category="Inventory")
+	virtual void SetSourceInventory(class UInv_InventoryComponent* InInventory);
+
+	UPROPERTY()
+	TObjectPtr<UInv_InventoryComponent> SourceInventory = nullptr;
+
+	bool bBoundToInventory = false;
+
+	void BindToInventory();
+	void UnbindFromInventory();
+
+	UFUNCTION(BlueprintImplementableEvent, Category="Inventory|UI")
+	void HandleItemAdded(UInv_InventoryItem* Item);
+	
+	UFUNCTION(BlueprintImplementableEvent, Category="Inventory|UI")
+	void HandleItemRemoved(UInv_InventoryItem* Item);
+
+	UFUNCTION(Category="Inventory|UI")
+	void HandleStackChanged(const FInv_SlotAvailabilityResult& Result);
+	
 	virtual void OnItemHovered(UInv_InventoryItem* Item) {}
 	virtual void OnItemUnHovered() {}
 	virtual bool HasHoverItem() const { return false; }
