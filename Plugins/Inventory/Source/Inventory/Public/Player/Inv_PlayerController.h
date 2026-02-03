@@ -26,6 +26,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	void ToggleInventory();
 
+	UFUNCTION(BlueprintCallable, Category = "Inventory")
+	void CloseExternalInventory();
+
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category="Interaction")
 	AActor* GetHoveredActor() const { return ThisActor.Get(); }
 	
@@ -41,6 +44,10 @@ public:
 	UFUNCTION(Server, Reliable)
 	void Server_SellToMerchant(AActor* MerchantActor, FName ItemID, int32 Quantity);
 
+	// ---- Movement (TopDown port) ----
+	UPROPERTY(EditDefaultsOnly, Category="Input|Movement")
+	TObjectPtr<UInputAction> SetDestinationClickAction;
+
 
 protected:
 	virtual void BeginPlay() override;
@@ -48,7 +55,7 @@ protected:
 
 	// ---- Movement (TopDown port) ----
 	UPROPERTY(EditDefaultsOnly, Category="Input|Movement")
-	TObjectPtr<UInputAction> SetDestinationClickAction;
+	TObjectPtr<UInputAction> SetDestinationClaickAction;
 
 	UPROPERTY(EditDefaultsOnly, Category="Input|Movement")
 	float PressedThreshold = 0.20f; // short click vs hold threshold

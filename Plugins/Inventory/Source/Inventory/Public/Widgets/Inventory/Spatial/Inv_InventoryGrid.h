@@ -8,6 +8,13 @@
 
 #include "Inv_InventoryGrid.generated.h"
 
+UENUM(BlueprintType)
+enum class EInv_GridUIMode : uint8
+{
+	PlayerInventory,
+	ExternalInventory,   // merchant / chest / etc.
+};
+
 class UInv_ItemPopUp;
 class UInv_HoverItem;
 struct FInv_ImageFragment;
@@ -41,6 +48,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Inventory")
 	void SetInventoryComponent(UInv_InventoryComponent* InComp);
 
+	UPROPERTY()
+	bool bPlayerOwnedInventory = true;
+
 	void BindToInventory(UInv_InventoryComponent* InComp);
 	void UnbindFromInventory();
 
@@ -67,7 +77,11 @@ public:
 	UFUNCTION()
 	void AddItem(UInv_InventoryItem* Item);
 
+	UPROPERTY(BlueprintReadOnly, Category="Inventory|UI")
+	bool bAllowContextMenu = true;
 
+	UPROPERTY(BlueprintReadOnly, Category="Inventory|UI")
+	EInv_GridUIMode UIMode = EInv_GridUIMode::PlayerInventory;
 private:
 
 	TWeakObjectPtr<UInv_InventoryComponent> InventoryComponent;

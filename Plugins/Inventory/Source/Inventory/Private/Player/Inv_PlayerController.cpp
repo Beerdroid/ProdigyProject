@@ -184,6 +184,22 @@ void AInv_PlayerController::ToggleInventory()
 	}
 }
 
+void AInv_PlayerController::CloseExternalInventory()
+{
+	if (!InventoryComponent.IsValid()) return;
+
+	InventoryComponent->CloseExternalInventoryUI();
+
+	// HUD visibility depends ONLY on main inventory
+	if (!InventoryComponent->IsMenuOpen())
+	{
+		if (IsValid(HUDWidget))
+		{
+			HUDWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+	}
+}
+
 void AInv_PlayerController::Server_StartTrade_Implementation(AActor* MerchantActor)
 {
 	UE_LOG(LogTemp, Warning, TEXT("Server_StartTrade"));

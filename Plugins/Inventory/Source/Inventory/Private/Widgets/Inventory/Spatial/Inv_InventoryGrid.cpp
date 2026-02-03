@@ -20,52 +20,37 @@
 #include "Widgets/Inventory/SlottedItems/Inv_SlottedItem.h"
 #include "Widgets/ItemPopUp/Inv_ItemPopUp.h"
 
-static bool IsInventoryOwnedByOwningPlayer(const UUserWidget* Widget, const UInv_InventoryComponent* IC)
+static bool IsPlayerInventoryForThisWidget(const UUserWidget* Widget, const UInv_InventoryComponent* IC)
 {
 	if (!IsValid(Widget) || !IsValid(IC)) return false;
 
-	const APlayerController* WidgetPC = Widget->GetOwningPlayer();
-	const AActor* InvOwner = IC->GetOwner();
-	if (!IsValid(WidgetPC) || !IsValid(InvOwner)) return false;
+	APlayerController* PC = Widget->GetOwningPlayer();
+	if (!IsValid(PC)) return false;
 
-	// Case 1: inventory on the controller
-	if (InvOwner == WidgetPC) return true;
+	AActor* Owner = IC->GetOwner();
+	if (!IsValid(Owner)) return false;
 
-	// Case 2: inventory on the pawn
-	if (const APawn* WidgetPawn = WidgetPC->GetPawn())
-	{
-		if (InvOwner == WidgetPawn) return true;
-	}
-
-	// Case 3: inventory on something "owned" by the controller/pawn
-	// (optional; only if you use SetOwner() meaningfully)
-	if (InvOwner->GetOwner() == WidgetPC) return true;
-	if (const APawn* WidgetPawn = WidgetPC->GetPawn())
-	{
-		if (InvOwner->GetOwner() == WidgetPawn) return true;
-	}
-
-	return false;
+	return (Owner == PC) || (Owner == PC->GetPawn());
 }
 
 void UInv_InventoryGrid::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
-
 	ConstructGrid();
 
 	// If someone already set InventoryComponent (external), use it.
 	if (InventoryComponent.IsValid())
 	{
+		bPlayerOwnedInventory = IsPlayerInventoryForThisWidget(this, InventoryComponent.Get()); // ✅
 		BindToInventory(InventoryComponent.Get());
 		RebuildFromSnapshot();
 		return;
 	}
 
-	// Otherwise default to player inventory
 	InventoryComponent = UInv_InventoryStatics::GetInventoryComponent(GetOwningPlayer());
 	if (!InventoryComponent.IsValid()) return;
 
+	bPlayerOwnedInventory = true; // ✅ since you explicitly grabbed the player's IC
 	BindToInventory(InventoryComponent.Get());
 	RebuildFromSnapshot();
 }
@@ -75,15 +60,16 @@ void UInv_InventoryGrid::SetInventoryComponent(UInv_InventoryComponent* InComp)
 	if (InventoryComponent.Get() == InComp) return;
 
 	UnbindFromInventory();
+
 	InventoryComponent = InComp;
 	if (!InventoryComponent.IsValid()) return;
 
-	const bool bIsPlayerInv = IsInventoryOwnedByOwningPlayer(this, InventoryComponent.Get());
-	bIsPlayerOwnedInventory = bIsPlayerInv; // store a bool on the grid
+	bPlayerOwnedInventory = IsPlayerInventoryForThisWidget(this, InventoryComponent.Get());
 
 	BindToInventory(InventoryComponent.Get());
 	RebuildFromSnapshot();
 }
+
 
 void UInv_InventoryGrid::BindToInventory(UInv_InventoryComponent* InComp)
 {
@@ -135,7 +121,7 @@ void UInv_InventoryGrid::RebuildFromSnapshot()
 	// Reset slot state (NO popup touching here)
 	for (UInv_GridSlot* GridSlot : GridSlots)
 	{
-		if (!IsValid(Slot)) continue;
+		if (!IsValid(GridSlot)) continue;
 
 		GridSlot->SetInventoryItem(nullptr);
 		GridSlot->SetUpperLeftIndex(INDEX_NONE);
@@ -738,6 +724,18 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 		return;
 	}
 
+	if (!bPlayerOwnedInventory && IsLeftClick(MouseEvent))
+	{
+		UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
+		return;
+	}
+
+	if (IsRightClick(MouseEvent) && !bPlayerOwnedInventory)
+	{
+		UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
+		return;
+	}
+
 	// Snapshot pointers BEFORE any unhover/cleanup, because unhover can invalidate hover state.
 	const bool bLeftClick  = IsLeftClick(MouseEvent);
 	const bool bRightClick = IsRightClick(MouseEvent);
@@ -753,7 +751,13 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 	// Context menu / popup should typically work even if slot is empty (if you want), but you currently assume item exists.
 	if (bRightClick)
 	{
-		// If you need to support popup on empty slot, handle it in CreateItemPopUp.
+		if (UIMode == EInv_GridUIMode::ExternalInventory)
+		{
+			// No item popup in external inventory
+			UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
+			return;
+		}
+
 		if (bClickedItemValid)
 		{
 			CreateItemPopUp(GridIndex);
@@ -766,6 +770,13 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 	// LEFT CLICK behavior
 	if (bLeftClick)
 	{
+		if (UIMode == EInv_GridUIMode::ExternalInventory)
+		{
+			// You can handle "buy on left click" here if you want:
+			// RequestBuy(ClickedInventoryItem, 1);
+			UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
+			return;
+		}
 		// If we're not holding anything (no hover item), clicking a valid item picks it up.
 		if (!bHasHoverWidget)
 		{
@@ -852,19 +863,55 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 
 void UInv_InventoryGrid::CreateItemPopUp(const int32 GridIndex)
 {
+	if (!GridSlots.IsValidIndex(GridIndex) || !IsValid(GridSlots[GridIndex])) return;
+
+	if (!ItemPopUpClass) return;
+
 	UInv_InventoryItem* RightClickedItem = GridSlots[GridIndex]->GetInventoryItem().Get();
 	if (!IsValid(RightClickedItem)) return;
+
+	// Prevent duplicates for that slot
 	if (IsValid(GridSlots[GridIndex]->GetItemPopUp())) return;
 
-	ItemPopUp = CreateWidget<UInv_ItemPopUp>(this, ItemPopUpClass);
+	APlayerController* PC = GetOwningPlayer();
+	if (!IsValid(PC) || !ItemPopUpClass) return;
+
+	ItemPopUp = CreateWidget<UInv_ItemPopUp>(PC, ItemPopUpClass);
+	if (!IsValid(ItemPopUp)) return;
+
 	GridSlots[GridIndex]->SetItemPopUp(ItemPopUp);
 
-	OwningCanvasPanel->AddChild(ItemPopUp);
-	UCanvasPanelSlot* CanvasSlot = UWidgetLayoutLibrary::SlotAsCanvasSlot(ItemPopUp);
-	const FVector2D MousePosition = UWidgetLayoutLibrary::GetMousePositionOnViewport(GetOwningPlayer());
-	CanvasSlot->SetPosition(MousePosition - ItemPopUpOffset);
-	CanvasSlot->SetSize(ItemPopUp->GetBoxSize());
+	// Put popup on screen (no Canvas dependency)
+	ItemPopUp->AddToPlayerScreen(/*ZOrder*/ 500);
+	ItemPopUp->SetVisibility(ESlateVisibility::Visible); // or SelfHitTestInvisible if only container should ignore hits
+	ItemPopUp->SetIsEnabled(true);
+	// Ensure DesiredSize is valid (important right after CreateWidget)
+	ItemPopUp->ForceLayoutPrepass();
 
+	// Position near mouse, but clamp to viewport
+	FVector2D MousePos;
+	if (!PC->GetMousePosition(MousePos.X, MousePos.Y))
+	{
+		int32 VX=0, VY=0;
+		PC->GetViewportSize(VX, VY);
+		MousePos = FVector2D(VX * 0.5f, VY * 0.5f);
+	}
+
+	const FVector2D PopupSize = ItemPopUp->GetDesiredSize();
+	const FVector2D ViewportSize = UWidgetLayoutLibrary::GetViewportSize(this);
+
+	// You previously used MousePosition - ItemPopUpOffset
+	FVector2D Desired = MousePos - ItemPopUpOffset;
+
+	// Clamp so it stays fully visible
+	Desired.X = FMath::Clamp(Desired.X, 0.f, FMath::Max(0.f, ViewportSize.X - PopupSize.X));
+	Desired.Y = FMath::Clamp(Desired.Y, 0.f, FMath::Max(0.f, ViewportSize.Y - PopupSize.Y));
+
+	// Top-left alignment is easier for clamp math
+	ItemPopUp->SetAlignmentInViewport(FVector2D(0.f, 0.f));
+	ItemPopUp->SetPositionInViewport(Desired, /*bRemoveDPIScale*/ true);
+
+	// ---- existing logic unchanged ----
 	const int32 SliderMax = GridSlots[GridIndex]->GetStackCount() - 1;
 	if (RightClickedItem->IsStackable() && SliderMax > 0)
 	{
@@ -1042,6 +1089,17 @@ void UInv_InventoryGrid::ConstructGrid()
 
 void UInv_InventoryGrid::OnGridSlotClicked(int32 GridIndex, const FPointerEvent& MouseEvent)
 {
+	if (UIMode == EInv_GridUIMode::ExternalInventory)
+	{
+		// external is not a place you can drop hover items into
+		return;
+	}
+
+	if (!bPlayerOwnedInventory)
+	{
+		return;
+	}
+	
 	if (!IsValid(HoverItem)) return;
 	if (!GridSlots.IsValidIndex(ItemDropIndex)) return;
 
@@ -1198,6 +1256,14 @@ void UInv_InventoryGrid::FillInStack(const int32 FillAmount, const int32 Remaind
 void UInv_InventoryGrid::ShowCursor()
 {
 	if (!IsValid(GetOwningPlayer())) return;
+
+	// If we're dragging, keep the drag cursor
+	if (IsValid(HoverItem))
+	{
+		GetOwningPlayer()->SetMouseCursorWidget(EMouseCursor::Default, GetVisibleCursorWidget());
+		return;
+	}
+
 	GetOwningPlayer()->SetMouseCursorWidget(EMouseCursor::Default, GetVisibleCursorWidget());
 }
 
@@ -1286,6 +1352,18 @@ void UInv_InventoryGrid::OnInventoryMenuToggled(bool bOpen)
 	if (!bOpen)
 	{
 		PutHoverItemBack();
+
+		// Close any popups that might remain
+		for (UInv_GridSlot* GridSlot : GridSlots)
+		{
+			if (!IsValid(GridSlot)) continue;
+
+			if (UInv_ItemPopUp* Pop = GridSlot->GetItemPopUp())
+			{
+				Pop->RemoveFromParent();
+				GridSlot->SetItemPopUp(nullptr);
+			}
+		}
 	}
 }
 

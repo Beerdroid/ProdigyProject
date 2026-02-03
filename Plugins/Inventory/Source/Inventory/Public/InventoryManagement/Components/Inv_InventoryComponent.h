@@ -178,8 +178,12 @@ private:
 	UPROPERTY()
 	TObjectPtr<UInv_InventoryComponent> ExternalInventoryComp = nullptr;
 
-
+	UPROPERTY()
 	bool bInventoryMenuOpen;
+	
+	UPROPERTY()
+	bool bExternalMenuOpen;
+	
 	void OpenInventoryMenu();
 	void CloseInventoryMenu();
 

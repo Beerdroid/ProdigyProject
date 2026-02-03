@@ -12,6 +12,46 @@
 #include "Items/Fragments/Inv_FragmentTags.h"
 #include "Items/Fragments/Inv_ItemFragment.h"
 
+static void CenterWidgetInViewport(
+	UUserWidget* Widget,
+	APlayerController* PC,
+	FVector2D CenterOffsetPx = FVector2D::ZeroVector,
+	UUserWidget* RelativeTo = nullptr,
+	float GapPx = 0.f)
+{
+	if (!IsValid(Widget) || !IsValid(PC)) return;
+
+	int32 VX = 0, VY = 0;
+	PC->GetViewportSize(VX, VY);
+
+	const FVector2D ViewportCenter(VX * 0.5f, VY * 0.5f);
+
+	// Make sure layout info exists
+	Widget->ForceLayoutPrepass();
+	if (RelativeTo)
+	{
+		RelativeTo->ForceLayoutPrepass();
+	}
+
+	const FVector2D ThisSize = Widget->GetDesiredSize();
+	const FVector2D OtherSize = RelativeTo ? RelativeTo->GetDesiredSize() : FVector2D::ZeroVector;
+
+	// Center pivot
+	Widget->SetAlignmentInViewport(FVector2D(0.5f, 0.5f));
+
+	FVector2D FinalPos = ViewportCenter + CenterOffsetPx;
+
+	// If we want to place relative to another widget (left/right)
+	if (RelativeTo && GapPx != 0.f)
+	{
+		const float Dir = FMath::Sign(GapPx); // negative = left, positive = right
+		const float AbsGap = FMath::Abs(GapPx);
+
+		FinalPos.X += Dir * ((OtherSize.X * 0.5f) + (ThisSize.X * 0.5f) + AbsGap);
+	}
+
+	Widget->SetPositionInViewport(FinalPos, true);
+}
 
 UInv_InventoryComponent::UInv_InventoryComponent() : InventoryList(this)
 {
@@ -548,15 +588,20 @@ void UInv_InventoryComponent::EnsureExternalInventoryMenuCreated()
 	}
 
 	ExternalInventoryMenu = CreateWidget<UInv_InventoryBase>(OwningController.Get(), WidgetClass);
-	if (!IsValid(ExternalInventoryMenu))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[InvUI] Failed to CreateWidget ExternalInventoryMenu"));
-		return;
-	}
+	if (!IsValid(ExternalInventoryMenu)) return;
 
-	ExternalInventoryMenu->AddToViewport();
+	ExternalInventoryMenu->AddToPlayerScreen(20);
 	ExternalInventoryMenu->SetVisibility(ESlateVisibility::Collapsed);
 	ExternalInventoryMenu->SetIsEnabled(false);
+
+	APlayerController* PC = OwningController.Get();
+	PC->GetWorldTimerManager().SetTimerForNextTick([this, PC]()
+	{
+		if (IsValid(ExternalInventoryMenu))
+		{
+			CenterWidgetInViewport(ExternalInventoryMenu, PC, FVector2D(-400.f, 0.f));
+		}
+	});
 
 	UE_LOG(LogTemp, Warning, TEXT("[InvUI] ExternalInventoryMenu created: %s"), *GetNameSafe(ExternalInventoryMenu));
 }
@@ -577,6 +622,7 @@ void UInv_InventoryComponent::OpenExternalInventoryUI(UInv_InventoryComponent* I
 	}
 
 	ExternalInventoryComp = InExternal;
+	bExternalMenuOpen = true;
 
 	// Ensure player menu exists
 	if (!IsValid(InventoryMenu))
@@ -625,39 +671,41 @@ void UInv_InventoryComponent::CloseExternalInventoryUI()
 		ExternalInventoryMenu->SetVisibility(ESlateVisibility::Collapsed);
 		ExternalInventoryMenu->SetIsEnabled(false);
 
-		// Important: unbind if you implemented it in widget
+		// Optional: only if your widget actually expects to unbind/release references
 		ExternalInventoryMenu->SetSourceInventory(nullptr);
 	}
 
 	ExternalInventoryComp = nullptr;
+	bExternalMenuOpen = false; // <-- add this flag (recommended)
 
-	// If you want to keep player inventory open, don’t touch InventoryMenu.
-	// If trade UI should close BOTH, hide InventoryMenu too:
-	if (IsValid(InventoryMenu))
+	// DO NOT touch InventoryMenu.
+	// DO NOT touch bInventoryMenuOpen.
+
+	// Only restore GameOnly if *no other UI* should keep GameAndUI mode.
+	if (!bInventoryMenuOpen /* && !AnyOtherUiOpen() */)
 	{
-		InventoryMenu->SetVisibility(ESlateVisibility::Collapsed);
-		InventoryMenu->SetIsEnabled(false);
+		ApplyGameOnlyInputMode();
 	}
-
-	bInventoryMenuOpen = false;
-
-	ApplyGameOnlyInputMode();
+	// else: keep current input mode, mouse cursor, etc.
 }
 
 void UInv_InventoryComponent::ApplyGameOnlyInputMode()
 {
 	if (!OwningController.IsValid()) return;
 
-	FInputModeGameAndUI InputMode;
-	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-	InputMode.SetHideCursorDuringCapture(false);
+	FInputModeGameOnly InputMode;
+	InputMode.SetConsumeCaptureMouseDown(false);
 
 	OwningController->SetInputMode(InputMode);
-	OwningController->SetShowMouseCursor(true);
+	OwningController->SetShowMouseCursor(false);
+
+	// These are optional depending on your click-to-move setup
+	OwningController->bEnableClickEvents = true;
+	OwningController->bEnableMouseOverEvents = true;
 
 	if (GEngine && GEngine->GameViewport)
 	{
-		GEngine->GameViewport->SetMouseCaptureMode(EMouseCaptureMode::NoCapture);
+		GEngine->GameViewport->SetMouseCaptureMode(EMouseCaptureMode::CapturePermanently_IncludingInitialMouseDown);
 		GEngine->GameViewport->SetHideCursorDuringCapture(false);
 	}
 }
@@ -1030,10 +1078,17 @@ void UInv_InventoryComponent::ConstructInventory()
 	InventoryMenu = CreateWidget<UInv_InventoryBase>(PC, InventoryMenuClass);
 	if (!IsValid(InventoryMenu)) return;
 
-	InventoryMenu->AddToViewport();
-
+	InventoryMenu->AddToPlayerScreen(10);
 	InventoryMenu->SetVisibility(ESlateVisibility::Collapsed);
 	InventoryMenu->SetIsEnabled(false);
+
+	PC->GetWorldTimerManager().SetTimerForNextTick([this, PC]()
+	{
+		if (IsValid(InventoryMenu))
+		{
+			CenterWidgetInViewport(InventoryMenu, PC, FVector2D(400.f, 0.f));
+		}
+	});
 	bInventoryMenuOpen = false;
 
 	SyncInventoryToUI();

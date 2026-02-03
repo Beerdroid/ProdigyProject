@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Inv_InventoryGrid.h"
 #include "Widgets/Inventory/InventoryBase/Inv_InventoryBase.h"
 #include "Inv_SpatialInventory.generated.h"
 
@@ -39,12 +40,9 @@ public:
 	// Inv_SpatialInventory.h
 	virtual void SetSourceInventory(UInv_InventoryComponent* InInventory) override;
 private:
-
+	
 	UPROPERTY()
 	TArray<TObjectPtr<UInv_EquippedGridSlot>> EquippedGridSlots;
-
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UCanvasPanel> CanvasPanel;
 
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UWidgetSwitcher> Switcher;
@@ -111,8 +109,8 @@ private:
 	
 	void DisableButton(UButton* Button);
 	void SetActiveGrid(UInv_InventoryGrid* Grid, UButton* Button);
-	void SetItemDescriptionSizeAndPosition(UInv_ItemDescription* Description, UCanvasPanel* Canvas) const;
-	void SetEquippedItemDescriptionSizeAndPosition(UInv_ItemDescription* Description, UInv_ItemDescription* EquippedDescription, UCanvasPanel* Canvas) const;
+	void SetItemDescriptionSizeAndPosition(UInv_ItemDescription* Description) const;
+	void SetEquippedItemDescriptionSizeAndPosition(UInv_ItemDescription* Description, UInv_ItemDescription* EquippedDescription) const;
 	bool CanEquipHoverItem(UInv_EquippedGridSlot* EquippedGridSlot, const FGameplayTag& EquipmentTypeTag) const;
 	UInv_EquippedGridSlot* FindSlotWithEquippedItem(UInv_InventoryItem* EquippedItem) const;
 	void ClearSlotOfItem(UInv_EquippedGridSlot* EquippedGridSlot);
