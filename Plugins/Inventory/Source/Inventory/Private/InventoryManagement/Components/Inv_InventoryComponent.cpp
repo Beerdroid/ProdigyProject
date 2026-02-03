@@ -756,6 +756,20 @@ void UInv_InventoryComponent::ReplayInventoryToUI()
 	}
 }
 
+bool UInv_InventoryComponent::BelongsTo(const APlayerController* PC) const
+{
+	if (!IsValid(PC)) return false;
+	if (!OwningController.IsValid()) return false;
+
+	return OwningController.Get() == PC;
+}
+
+bool UInv_InventoryComponent::BelongsToOwningController() const
+{
+	return OwningController.IsValid() && (OwningController.Get() == Cast<APlayerController>(OwningController.Get()));
+	// (This is basically "is valid"; keep if you want semantic readability)
+}
+
 void UInv_InventoryComponent::BeginPlay()
 {
 	Super::BeginPlay();

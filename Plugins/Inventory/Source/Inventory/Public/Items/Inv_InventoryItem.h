@@ -28,6 +28,16 @@ public:
 	bool IsConsumable() const;
 	int32 GetTotalStackCount() const { return TotalStackCount; }
 	void SetTotalStackCount(int32 Count) { TotalStackCount = Count; }
+
+	// Returns true if SellValue fragment exists and yields a non-negative price.
+	bool TryGetSellUnitPrice(float& OutPrice) const;
+
+	// Generic helper: find fragment by tag (thin wrapper around manifest helper).
+	template<typename TFrag> requires std::derived_from<TFrag, FInv_ItemFragment>
+	const TFrag* GetFragmentByTag(const FGameplayTag& Tag) const
+	{
+		return GetItemManifest().GetFragmentOfTypeWithTag<TFrag>(Tag);
+	}
 private:
 	UPROPERTY(Replicated, EditAnywhere, Category="Inventory")
 	FName ItemID = NAME_None;

@@ -3,6 +3,7 @@
 
 #include "Items/Inv_InventoryItem.h"
 
+#include "Items/Fragments/Inv_FragmentTags.h"
 #include "Items/Fragments/Inv_ItemFragment.h"
 #include "Net/UnrealNetwork.h"
 
@@ -52,4 +53,20 @@ bool UInv_InventoryItem::IsStackable() const
 bool UInv_InventoryItem::IsConsumable() const
 {
 	return GetItemManifest().GetItemCategory() == EInv_ItemCategory::Consumable;
+}
+
+bool UInv_InventoryItem::TryGetSellUnitPrice(float& OutPrice) const
+{
+	OutPrice = 0.f;
+
+	const FInv_LabeledNumberFragment* SellFrag =
+		GetFragmentByTag<FInv_LabeledNumberFragment>(FragmentTags::SellValueFragment);
+
+	if (!SellFrag) return false;
+
+	OutPrice = SellFrag->GetValue();
+	// Optional policy:
+	if (OutPrice < 0.f) OutPrice = 0.f;
+
+	return true;
 }

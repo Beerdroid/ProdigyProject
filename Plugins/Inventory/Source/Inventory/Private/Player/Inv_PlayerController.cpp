@@ -11,7 +11,10 @@
 #include "Widgets/HUD/Inv_HUDWidget.h"
 #include "Blueprint/AIBlueprintHelperLibrary.h"
 #include "NiagaraFunctionLibrary.h"
+#include "Items/Inv_InventoryItem.h"
+#include "Items/Fragments/Inv_FragmentTags.h"
 
+struct FInv_LabeledNumberFragment;
 DEFINE_LOG_CATEGORY_STATIC(LogInvTrace, Log, All);
 
 AInv_PlayerController::AInv_PlayerController()
@@ -71,64 +74,138 @@ void AInv_PlayerController::Server_BuyFromMerchant_Implementation(AActor* Mercha
 	}
 }
 
-void AInv_PlayerController::Server_SellToMerchant_Implementation(AActor* MerchantActor, FName ItemID, int32 Quantity)
+void AInv_PlayerController::Server_MoveItem_Implementation(
+	UInv_InventoryComponent* Source,
+	UInv_InventoryComponent* Target,
+	FName ItemID,
+	int32 Quantity,
+	EInv_MoveReason Reason)
 {
-	UE_LOG(LogTemp, Warning, TEXT("[INV][Server_Sell] PC=%s Merchant=%s ItemID=%s Qty=%d Auth=%d"),
-		*GetNameSafe(this), *GetNameSafe(MerchantActor), *ItemID.ToString(), Quantity, HasAuthority());
+	UE_LOG(LogTemp, Warning, TEXT("[INV][Move] PC=%s Source=%s Target=%s ItemID=%s Qty=%d Reason=%d Auth=%d"),
+		*GetNameSafe(this),
+		*GetNameSafe(Source),
+		*GetNameSafe(Target),
+		*ItemID.ToString(),
+		Quantity,
+		(int32)Reason,
+		HasAuthority() ? 1 : 0);
 
-	if (!IsValid(MerchantActor) || ItemID.IsNone() || Quantity <= 0)
+	if (!IsValid(Source) || !IsValid(Target)) return;
+	if (ItemID.IsNone() || Quantity <= 0) return;
+
+	// NOTE: BelongsTo / IsMerchantInventory not implemented yet.
+	// Keep this block if it compiles; otherwise comment it out temporarily.
+	// Always validate this is the player's inventory involved
+	if (!Source->BelongsTo(this) && !Target->BelongsTo(this))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[INV][Server_Sell] fail: invalid args"));
+		UE_LOG(LogTemp, Warning, TEXT("[INV][Move] blocked: neither Source nor Target belongs to this PC"));
 		return;
 	}
 
-	if (!InventoryComponent.IsValid())
+	// Clamp quantity
+	const int32 Available = Source->GetTotalQuantityByItemID(ItemID);
+	const int32 MoveQty = FMath::Clamp(Quantity, 1, Available);
+	if (MoveQty <= 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[INV][Server_Sell] fail: InventoryComponent invalid"));
+		UE_LOG(LogTemp, Warning, TEXT("[INV][Move] blocked: MoveQty<=0 (Available=%d)"), Available);
 		return;
 	}
 
-	UInv_InventoryComponent* MerchantInv = MerchantActor->FindComponentByClass<UInv_InventoryComponent>();
-	UE_LOG(LogTemp, Warning, TEXT("[INV][Server_Sell] MerchantInv=%s"), *GetNameSafe(MerchantInv));
+	// --- POLICY ---
+	int32 PricePerItem = 0;
 
-	if (!IsValid(MerchantInv))
+	auto ResolveUnitPriceFromDB = [&](UInv_InventoryComponent* Context, const TCHAR* Label) -> bool
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[INV][Server_Sell] fail: MerchantInv missing"));
-		return;
+		if (!IsValid(Context)) return false;
+
+		FInv_ItemManifest Manifest;
+		if (!Context->ResolveManifestByItemID(ItemID, Manifest))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[INV][Price] %s: ResolveManifestByItemID FAILED ItemID=%s"),
+				Label, *ItemID.ToString());
+			return false;
+		}
+
+		// Use existing "item-level" API to interpret fragments (PC never touches fragments)
+		UInv_InventoryItem* TempItem = NewObject<UInv_InventoryItem>(GetTransientPackage());
+		if (!IsValid(TempItem))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[INV][Price] %s: TempItem alloc failed"), Label);
+			return false;
+		}
+
+		TempItem->SetItemID(ItemID);
+		TempItem->SetItemManifest(Manifest);
+
+		float UnitPriceFloat = 0.f;
+		if (!TempItem->TryGetSellUnitPrice(UnitPriceFloat))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[INV][Price] %s: SellValueFragment missing ItemID=%s"),
+				Label, *ItemID.ToString());
+			return false;
+		}
+
+		// Your current money pipeline uses int32. Keep this conversion policy here.
+		PricePerItem = FMath::Max(0, FMath::RoundToInt(UnitPriceFloat));
+
+		UE_LOG(LogTemp, Warning, TEXT("[INV][Price] %s: ItemID=%s UnitPrice=%d (raw=%.2f)"),
+			Label, *ItemID.ToString(), PricePerItem, UnitPriceFloat);
+
+		return true;
+	};
+
+	if (Reason == EInv_MoveReason::Sell)
+	{
+		// later enforce: Target->IsMerchantInventory()
+		if (!Target->IsMerchantInventory())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[INV][Sell] blocked: Target is not merchant inv. Target=%s"),
+				*GetNameSafe(Target));
+			return;
+		}
+
+		ResolveUnitPriceFromDB(Source, TEXT("SELL"));
 	}
 
-	const int32 PlayerQty = InventoryComponent->GetTotalQuantityByItemID(ItemID);
-	UE_LOG(LogTemp, Warning, TEXT("[INV][Server_Sell] PlayerQty=%d"), PlayerQty);
-
-	if (PlayerQty < Quantity)
+	if (Reason == EInv_MoveReason::Buy)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[INV][Server_Sell] fail: not enough quantity"));
-		return;
+		// later enforce: Source->IsMerchantInventory()
+		if (!Source->IsMerchantInventory())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[INV][Buy] blocked: Source is not merchant inv. Source=%s"),
+				*GetNameSafe(Source));
+			return;
+		}
+
+		ResolveUnitPriceFromDB(Source, TEXT("BUY")); // later you may have BuyValueFragment
 	}
 
-	// 2) Price (sell price)
-	const int32 TotalGain = /*ResolveSellPrice(ItemID)*/ 1 * Quantity;
-
-	// 3) Remove from player
-	InventoryComponent->Server_RemoveItemByID(ItemID, Quantity, MerchantActor);
-
-	// 4) Add to merchant
+	// --- MOVE CORE ---
 	int32 Remainder = 0;
-	MerchantInv->AddItemByID_ServerAuth(ItemID, Quantity, this, Remainder);
+	Target->AddItemByID_ServerAuth(ItemID, MoveQty, this, Remainder);
 
-	// If merchant has capacity limits later, handle remainder:
-	// - if remainder > 0: give back items to player OR drop them OR just don’t allow sell.
-	if (Remainder > 0)
+	const int32 Accepted = MoveQty - Remainder;
+	UE_LOG(LogTemp, Warning, TEXT("[INV][Move] AddItemByID result MoveQty=%d Remainder=%d Accepted=%d"),
+		MoveQty, Remainder, Accepted);
+
+	if (Accepted <= 0)
 	{
-		// safest: give back
-		int32 GiveBackRemainder = 0;
-		InventoryComponent->AddItemByID_ServerAuth(ItemID, Remainder, this, GiveBackRemainder);
-		// If GiveBackRemainder > 0 here, you’ve got bigger capacity issues — decide policy.
+		UE_LOG(LogTemp, Warning, TEXT("[INV][Move] blocked: nothing accepted by target"));
 		return;
 	}
 
-	// 5) Pay player
-	// AddMoney(TotalGain);
+	Source->Server_RemoveItemByID(ItemID, Accepted, Target->GetOwner());
+
+	UE_LOG(LogTemp, Warning, TEXT("[INV][Move] Removed from source: ItemID=%s Accepted=%d"),
+		*ItemID.ToString(), Accepted);
+
+	// --- MONEY (later) ---
+	if ((Reason == EInv_MoveReason::Sell || Reason == EInv_MoveReason::Buy) && PricePerItem > 0)
+	{
+		const int32 Total = PricePerItem * Accepted;
+		UE_LOG(LogTemp, Warning, TEXT("[INV][Money] Reason=%d PricePerItem=%d Accepted=%d Total=%d (not applied yet)"),
+			(int32)Reason, PricePerItem, Accepted, Total);
+	}
 }
 
 void AInv_PlayerController::BeginPlay()

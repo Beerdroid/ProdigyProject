@@ -19,6 +19,28 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FItemEquipStatusChanged, UInv_Invent
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInventoryMenuToggled, bool, bOpen);
 DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnInvDeltaNative, FName /*ItemID*/, int32 /*DeltaQty*/, UObject* /*Context*/);
 
+UENUM(BlueprintType)
+enum class EInv_InventoryType : uint8
+{
+	Player,
+	Merchant,
+	Container,
+	Quest,     // optional
+	Trade,     // optional
+};
+
+
+UENUM(BlueprintType)
+enum class EInv_MoveReason : uint8
+{
+	Move,    // container ↔ player
+	Sell,    // player → merchant
+	Buy,     // merchant → player
+	Loot,    // corpse → player
+	Trade    // player ↔ player (later)
+};
+
+
 USTRUCT(BlueprintType)
 struct FInv_PredefinedItemEntry
 {
@@ -97,6 +119,15 @@ public:
 	UFUNCTION(BlueprintPure, Category="Inventory|UI")
 	FInv_ItemView BuildItemViewFromManifest(const FInv_ItemManifest& Manifest) const;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Inventory")
+	EInv_InventoryType InventoryKind = EInv_InventoryType::Container;
+
+	UFUNCTION(BlueprintPure, Category="Inventory")
+	bool IsMerchantInventory() const { return InventoryKind == EInv_InventoryType::Merchant; }
+
+	UFUNCTION(BlueprintPure, Category="Inventory")
+	bool IsPlayerInventory() const { return InventoryKind == EInv_InventoryType::Player; }
+
 	FInventoryItemChange OnItemAdded;
 	FInventoryItemChange OnItemRemoved;
 	FNoRoomInInventory NoRoomInInventory;
@@ -141,6 +172,12 @@ public:
 	{
 		return ExternalInventoryComp;
 	}
+
+	bool BelongsTo(const APlayerController* PC) const;
+
+	bool BelongsToOwningController() const;
+
+	bool ResolveManifestByItemID(FName ItemID, FInv_ItemManifest& OutManifest) const;
 	
 protected:
 	virtual void BeginPlay() override;
@@ -152,10 +189,6 @@ protected:
 private:
 
 	TWeakObjectPtr<APlayerController> OwningController;
-
-	bool ResolveManifestByItemID(FName ItemID, FInv_ItemManifest& OutManifest) const;
-
-
 
 	bool TryAddItemByManifest_NoUI(FName ItemID, const FInv_ItemManifest& Manifest, int32 Quantity, int32& OutRemainder);
 

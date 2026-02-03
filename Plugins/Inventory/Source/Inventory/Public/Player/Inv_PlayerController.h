@@ -42,7 +42,13 @@ public:
 	void Server_BuyFromMerchant(AActor* MerchantActor, FName ItemID, int32 Quantity);
 
 	UFUNCTION(Server, Reliable)
-	void Server_SellToMerchant(AActor* MerchantActor, FName ItemID, int32 Quantity);
+	void Server_MoveItem(
+		UInv_InventoryComponent* Source,
+		UInv_InventoryComponent* Target,
+		FName ItemID,
+		int32 Quantity,
+		EInv_MoveReason Reason
+	);
 
 	// ---- Movement (TopDown port) ----
 	UPROPERTY(EditDefaultsOnly, Category="Input|Movement")
