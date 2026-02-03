@@ -135,6 +135,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Inventory|UI")
 	void ReplayInventoryToUI();
+
+	UFUNCTION(BlueprintCallable, Category="Inventory|External")
+	UInv_InventoryComponent* GetExternalInventoryComp() const
+	{
+		return ExternalInventoryComp;
+	}
 	
 protected:
 	virtual void BeginPlay() override;
@@ -177,6 +183,8 @@ private:
 
 	UPROPERTY()
 	TObjectPtr<UInv_InventoryComponent> ExternalInventoryComp = nullptr;
+
+
 
 	UPROPERTY()
 	bool bInventoryMenuOpen;

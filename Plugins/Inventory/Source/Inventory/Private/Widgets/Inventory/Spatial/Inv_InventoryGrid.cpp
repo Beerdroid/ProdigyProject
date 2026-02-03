@@ -16,6 +16,7 @@
 #include "Widgets/Inventory/GridSlots/Inv_GridSlot.h"
 #include "Widgets/Utils/Inv_WidgetUtils.h"
 #include "Items/Manifest/Inv_ItemManifest.h"
+#include "Player/Inv_PlayerController.h"
 #include "Widgets/Inventory/HoverItem/Inv_HoverItem.h"
 #include "Widgets/Inventory/SlottedItems/Inv_SlottedItem.h"
 #include "Widgets/ItemPopUp/Inv_ItemPopUp.h"
@@ -628,6 +629,11 @@ bool UInv_InventoryGrid::IsLeftClick(const FPointerEvent& MouseEvent) const
 	return MouseEvent.GetEffectingButton() == EKeys::LeftMouseButton;
 }
 
+bool UInv_InventoryGrid::IsMiddleClick(const FPointerEvent& MouseEvent) const
+{
+	return MouseEvent.GetEffectingButton() == EKeys::MiddleMouseButton;
+}
+
 void UInv_InventoryGrid::PickUp(UInv_InventoryItem* ClickedInventoryItem, const int32 GridIndex)
 {
 	AssignHoverItem(ClickedInventoryItem, GridIndex, GridIndex);
@@ -739,6 +745,7 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 	// Snapshot pointers BEFORE any unhover/cleanup, because unhover can invalidate hover state.
 	const bool bLeftClick  = IsLeftClick(MouseEvent);
 	const bool bRightClick = IsRightClick(MouseEvent);
+	const bool bMiddleClick = IsMiddleClick(MouseEvent);
 
 	UInv_InventoryItem* ClickedInventoryItem = GridSlots[GridIndex]->GetInventoryItem().Get();
 	const bool bClickedItemValid = IsValid(ClickedInventoryItem);
@@ -748,6 +755,75 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 	UInv_InventoryItem* HoverInvItem = bHasHoverWidget ? HoverItem->GetInventoryItem() : nullptr;
 	const bool bHoverInvItemValid = IsValid(HoverInvItem);
 
+	UE_LOG(LogTemp, Warning, TEXT("[INV][GridClick] idx=%d L=%d R=%d M=%d PlayerOwned=%d UIMode=%d"),
+	GridIndex, bLeftClick, bRightClick, bMiddleClick, bPlayerOwnedInventory, (int32)UIMode);
+
+	// MIDDLE CLICK = Sell (only from player inventory, only if merchant UI context)
+	if (bMiddleClick)
+	{
+    UE_LOG(LogTemp, Warning, TEXT("[INV][Sell] MMB detected idx=%d"), GridIndex);
+
+    if (!bPlayerOwnedInventory || UIMode != EInv_GridUIMode::PlayerInventory)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[INV][Sell] blocked: not player inventory. PlayerOwned=%d UIMode=%d"),
+            bPlayerOwnedInventory, (int32)UIMode);
+        UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
+        return;
+    }
+
+    if (!bClickedItemValid)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[INV][Sell] blocked: clicked item invalid"));
+        UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
+        return;
+    }
+
+    APlayerController* PC = GetOwningPlayer();
+    AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(PC);
+    UE_LOG(LogTemp, Warning, TEXT("[INV][Sell] PC=%s InvPC=%s"),
+        *GetNameSafe(PC), *GetNameSafe(InvPC));
+
+    if (!InvPC)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[INV][Sell] blocked: InvPC cast failed"));
+        UInv_InventoryStatics::ItemUnhovered(PC);
+        return;
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("[INV][Sell] Grid.InventoryComponent=%s ExternalComp=%s"),
+        *GetNameSafe(InventoryComponent.Get()),
+        *GetNameSafe(IsValid(InventoryComponent.Get()) ? InventoryComponent->GetExternalInventoryComp() : nullptr));
+
+    // FIXED CONDITION:
+    if (!InventoryComponent.IsValid() || !IsValid(InventoryComponent->GetExternalInventoryComp()))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[INV][Sell] blocked: no merchant open (or no inv comp)"));
+        UInv_InventoryStatics::ItemUnhovered(PC);
+        return;
+    }
+
+    AActor* MerchantActor = InventoryComponent->GetExternalInventoryComp()->GetOwner();
+    UE_LOG(LogTemp, Warning, TEXT("[INV][Sell] MerchantActor=%s"), *GetNameSafe(MerchantActor));
+
+    if (!IsValid(MerchantActor))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[INV][Sell] blocked: merchant actor invalid"));
+        UInv_InventoryStatics::ItemUnhovered(PC);
+        return;
+    }
+
+    const FName ItemID = ClickedInventoryItem->GetItemID();
+    const int32 Quantity = MouseEvent.IsShiftDown() ? GridSlots[GridIndex]->GetStackCount() : 1;
+
+    UE_LOG(LogTemp, Warning, TEXT("[INV][Sell] RPC -> Server_SellToMerchant ItemID=%s Qty=%d Shift=%d"),
+        *ItemID.ToString(), Quantity, MouseEvent.IsShiftDown());
+
+    InvPC->Server_SellToMerchant(MerchantActor, ItemID, Quantity);
+
+    UInv_InventoryStatics::ItemUnhovered(PC);
+    return;
+	}
+	
 	// Context menu / popup should typically work even if slot is empty (if you want), but you currently assume item exists.
 	if (bRightClick)
 	{

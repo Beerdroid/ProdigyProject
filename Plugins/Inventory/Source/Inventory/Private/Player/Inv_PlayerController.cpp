@@ -73,15 +73,38 @@ void AInv_PlayerController::Server_BuyFromMerchant_Implementation(AActor* Mercha
 
 void AInv_PlayerController::Server_SellToMerchant_Implementation(AActor* MerchantActor, FName ItemID, int32 Quantity)
 {
-	if (!IsValid(MerchantActor) || ItemID.IsNone() || Quantity <= 0) return;
-	if (!InventoryComponent.IsValid()) return;
+	UE_LOG(LogTemp, Warning, TEXT("[INV][Server_Sell] PC=%s Merchant=%s ItemID=%s Qty=%d Auth=%d"),
+		*GetNameSafe(this), *GetNameSafe(MerchantActor), *ItemID.ToString(), Quantity, HasAuthority());
+
+	if (!IsValid(MerchantActor) || ItemID.IsNone() || Quantity <= 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[INV][Server_Sell] fail: invalid args"));
+		return;
+	}
+
+	if (!InventoryComponent.IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[INV][Server_Sell] fail: InventoryComponent invalid"));
+		return;
+	}
 
 	UInv_InventoryComponent* MerchantInv = MerchantActor->FindComponentByClass<UInv_InventoryComponent>();
-	if (!IsValid(MerchantInv)) return;
+	UE_LOG(LogTemp, Warning, TEXT("[INV][Server_Sell] MerchantInv=%s"), *GetNameSafe(MerchantInv));
 
-	// 1) Verify player has item
+	if (!IsValid(MerchantInv))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[INV][Server_Sell] fail: MerchantInv missing"));
+		return;
+	}
+
 	const int32 PlayerQty = InventoryComponent->GetTotalQuantityByItemID(ItemID);
-	if (PlayerQty < Quantity) return;
+	UE_LOG(LogTemp, Warning, TEXT("[INV][Server_Sell] PlayerQty=%d"), PlayerQty);
+
+	if (PlayerQty < Quantity)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[INV][Server_Sell] fail: not enough quantity"));
+		return;
+	}
 
 	// 2) Price (sell price)
 	const int32 TotalGain = /*ResolveSellPrice(ItemID)*/ 1 * Quantity;
