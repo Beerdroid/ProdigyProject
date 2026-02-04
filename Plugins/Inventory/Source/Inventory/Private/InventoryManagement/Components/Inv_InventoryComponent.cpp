@@ -205,6 +205,11 @@ bool UInv_InventoryComponent::TryAddItemByManifest(FName ItemID, const FInv_Item
 	return true;
 }
 
+void UInv_InventoryComponent::Client_EmitInvDelta_Implementation(FName ItemID, int32 DeltaQty, EInv_MoveReason Reason)
+{
+	OnInvDelta.Broadcast(ItemID, DeltaQty, /*Context*/ nullptr);
+}
+
 void UInv_InventoryComponent::Server_AddNewItemFromManifest_Implementation(FName ItemID, FInv_ItemManifest Manifest, int32 StackCount)
 {
 	if (ItemID.IsNone() || StackCount <= 0) return;
@@ -504,10 +509,20 @@ void UInv_InventoryComponent::SyncExternalInventoryToUI()
 
 void UInv_InventoryComponent::EmitInvDeltaByItemID(FName ItemID, int32 DeltaQty, UObject* Context)
 {
-	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
 	if (ItemID.IsNone() || DeltaQty == 0) return;
 
+	// Always broadcast on whichever machine is executing this call
 	OnInvDelta.Broadcast(ItemID, DeltaQty, Context);
+
+	// If we are authoritative, also forward to owning client so UI/quest can update there
+	AActor* Owner = GetOwner();
+	if (!Owner || !Owner->HasAuthority()) return;
+
+	// Determine reason safely (you can map from Context if you want; simplest is pass nullptr and choose reason at call sites)
+	const EInv_MoveReason Reason = EInv_MoveReason::Move;
+
+	// Only the owning client needs this
+	Client_EmitInvDelta(ItemID, DeltaQty, Reason);
 }
 
 void UInv_InventoryComponent::Server_ConsumeItem_Implementation(UInv_InventoryItem* Item)
@@ -564,6 +579,15 @@ void UInv_InventoryComponent::AddRepSubObj(UObject* SubObj)
 	}
 }
 
+void UInv_InventoryComponent::HandleExternalInvDelta(FName ItemID, int32 DeltaQty, UObject* Context)
+{
+	if (!bExternalMenuOpen) return;
+	if (!IsValid(ExternalInventoryMenu)) return;
+
+	// Optional: only refresh if the delta came from the currently opened external comp
+	ExternalInventoryComp->ReplayInventoryToUI();
+}
+
 TArray<UInv_InventoryItem*> UInv_InventoryComponent::GetAllItems()
 {
 	return InventoryList.GetAllItems();
@@ -610,42 +634,33 @@ void UInv_InventoryComponent::OpenExternalInventoryUI(UInv_InventoryComponent* I
 {
 	UE_LOG(LogTemp, Warning, TEXT("OpenExternalInventoryUI started"));
 
-	if (!OwningController.IsValid())
+	if (!OwningController.IsValid()) return;
+	if (!IsValid(InExternal)) return;
+
+	// Unbind previous external
+	if (IsValid(ExternalInventoryComp))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("OpenExternalInventoryUI abort: OwningController invalid"));
-		return;
-	}
-	if (!IsValid(InExternal))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("OpenExternalInventoryUI abort: InExternal invalid"));
-		return;
+		ExternalInventoryComp->OnInvDelta.RemoveAll(this);
 	}
 
 	ExternalInventoryComp = InExternal;
 	bExternalMenuOpen = true;
 
-	// Ensure player menu exists
 	if (!IsValid(InventoryMenu))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("OpenExternalInventoryUI: InventoryMenu invalid -> ConstructInventory"));
 		ConstructInventory();
 	}
-	if (!IsValid(InventoryMenu))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("OpenExternalInventoryUI abort: InventoryMenu still invalid"));
-		return;
-	}
+	if (!IsValid(InventoryMenu)) return;
 
-	// ✅ Create external menu lazily (do NOT return)
 	EnsureExternalInventoryMenuCreated();
-	if (!IsValid(ExternalInventoryMenu))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("OpenExternalInventoryUI abort: ExternalInventoryMenu invalid after Ensure"));
-		return;
-	}
+	if (!IsValid(ExternalInventoryMenu)) return;
+
+	// Bind to external changes
+	ExternalInventoryComp->OnInvDelta.AddUObject(this, &UInv_InventoryComponent::HandleExternalInvDelta);
 
 	ExternalInventoryMenu->SetSourceInventory(ExternalInventoryComp);
 
+	// IMPORTANT: refresh the visible widget, not the merchant component
 	ExternalInventoryComp->ReplayInventoryToUI();
 
 	InventoryMenu->SetIsEnabled(true);
@@ -798,6 +813,11 @@ void UInv_InventoryComponent::ReadyForReplication()
 
 	Owner->FlushNetDormancy();
 	Owner->ForceNetUpdate();
+}
+
+void UInv_InventoryComponent::NotifyInventoryChanged()
+{
+	OnInventoryChanged.Broadcast();
 }
 
 void UInv_InventoryComponent::SyncInventoryToUI()
@@ -1044,6 +1064,8 @@ bool UInv_InventoryComponent::TryAddItemByManifest_NoUI(
 			It->GetTotalStackCount()
 		);
 	}
+
+	NotifyInventoryChanged();
 
 	return true;
 }

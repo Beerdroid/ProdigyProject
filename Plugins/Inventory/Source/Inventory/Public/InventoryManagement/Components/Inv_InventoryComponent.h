@@ -18,6 +18,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FStackChange, const FInv_SlotAvailab
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FItemEquipStatusChanged, UInv_InventoryItem*, Item);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInventoryMenuToggled, bool, bOpen);
 DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnInvDeltaNative, FName /*ItemID*/, int32 /*DeltaQty*/, UObject* /*Context*/);
+DECLARE_MULTICAST_DELEGATE(FOnInventoryChangedNative);
 
 UENUM(BlueprintType)
 enum class EInv_InventoryType : uint8
@@ -64,6 +65,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Inventory")
 	bool TryAddItemByManifest(FName ItemID, const FInv_ItemManifest& Manifest, int32 Quantity, int32& OutRemainder);
+
+	UFUNCTION(Client, Reliable)
+	void Client_EmitInvDelta(FName ItemID, int32 DeltaQty, EInv_MoveReason Reason);
 
 	UFUNCTION(Server, Reliable)
 	void Server_AddNewItemFromManifest(FName ItemID, FInv_ItemManifest Manifest, int32 StackCount);
@@ -136,12 +140,17 @@ public:
 	FItemEquipStatusChanged OnItemUnequipped;
 	FInventoryMenuToggled OnInventoryMenuToggled;
 	FOnInvDeltaNative OnInvDelta;
+	FOnInventoryChangedNative OnInventoryChanged;
 
 	UPROPERTY(Replicated)
 	bool bInitialized = false;
 
 	UPROPERTY(Replicated)
 	bool bPredefinedApplied = false;
+
+	
+	void HandleExternalInvDelta(FName ItemID, int32 DeltaQty, UObject* Context);
+	
 
 	UPROPERTY(Replicated, EditAnywhere, Category="Inventory|Predefined")
 	TArray<FInv_PredefinedItemEntry> PredefinedItems;
@@ -184,6 +193,8 @@ protected:
 
 	virtual void ReadyForReplication() override;
 
+	void NotifyInventoryChanged();
+	
 	void SyncInventoryToUI();
 
 private:
