@@ -751,13 +751,7 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 		return;
 	}
 
-	if (!bPlayerOwnedInventory && IsLeftClick(MouseEvent))
-	{
-		UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
-		return;
-	}
-
-	if (IsRightClick(MouseEvent) && !bPlayerOwnedInventory)
+	if (!bPlayerOwnedInventory && (IsLeftClick(MouseEvent) || IsRightClick(MouseEvent)))
 	{
 		UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
 		return;
@@ -782,19 +776,11 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 	// MIDDLE CLICK = Sell (only from player inventory, only if merchant UI context)
 	if (bMiddleClick)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[INV][Sell] MMB detected idx=%d"), GridIndex);
-
-		// Sell only from player inventory while merchant is open
-		if (!bPlayerOwnedInventory || UIMode != EInv_GridUIMode::PlayerInventory)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("[INV][Sell] blocked: not player inventory"));
-			UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
-			return;
-		}
+		UE_LOG(LogTemp, Warning, TEXT("[INV][MMB] detected idx=%d"), GridIndex);
 
 		if (!bClickedItemValid)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[INV][Sell] blocked: clicked item invalid"));
+			UE_LOG(LogTemp, Warning, TEXT("[INV][MMB] blocked: clicked item invalid"));
 			UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
 			return;
 		}
@@ -802,29 +788,43 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 		AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(GetOwningPlayer());
 		if (!InvPC)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[INV][Sell] blocked: InvPC cast failed"));
+			UE_LOG(LogTemp, Warning, TEXT("[INV][MMB] blocked: InvPC cast failed"));
 			UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
 			return;
 		}
 
-		// FIXED CONDITION (you already fixed earlier)
-		if (!InventoryComponent.IsValid() || !IsValid(InventoryComponent->GetExternalInventoryComp()))
+		// We need the "trade pair" to exist. This works if you did the symmetric link fix.
+		UInv_InventoryComponent* ThisInv = InventoryComponent.Get();
+		UInv_InventoryComponent* OtherInv = IsValid(ThisInv) ? ThisInv->GetExternalInventoryComp() : nullptr;
+
+		if (!IsValid(ThisInv) || !IsValid(OtherInv))
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[INV][Sell] blocked: no external inventory (merchant) open"));
+			UE_LOG(LogTemp, Warning, TEXT("[INV][MMB] blocked: no external inventory open"));
 			UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
 			return;
 		}
-
-		UInv_InventoryComponent* Source = InventoryComponent.Get();
-		UInv_InventoryComponent* Target = InventoryComponent->GetExternalInventoryComp();
 
 		const FName ItemID = ClickedInventoryItem->GetItemID();
 		const int32 Quantity = MouseEvent.IsShiftDown() ? GridSlots[GridIndex]->GetStackCount() : 1;
 
-		UE_LOG(LogTemp, Warning, TEXT("[INV][Sell] RPC -> Server_MoveItem ItemID=%s Qty=%d"),
-			*ItemID.ToString(), Quantity);
-
-		InvPC->Server_MoveItem(Source, Target, ItemID, Quantity, EInv_MoveReason::Sell);
+		// ✅ Branch by context
+		if (bPlayerOwnedInventory && UIMode == EInv_GridUIMode::PlayerInventory)
+		{
+			// SELL: Player -> Merchant
+			UE_LOG(LogTemp, Warning, TEXT("[INV][Sell] MMB -> Server_MoveItem %s Qty=%d"), *ItemID.ToString(), Quantity);
+			InvPC->Server_MoveItem(ThisInv, OtherInv, ItemID, Quantity, EInv_MoveReason::Sell);
+		}
+		else if (!bPlayerOwnedInventory /* merchant/external grid */)
+		{
+			// BUY/BACK: Merchant -> Player
+			UE_LOG(LogTemp, Warning, TEXT("[INV][Buy] MMB -> Server_MoveItem %s Qty=%d"), *ItemID.ToString(), Quantity);
+			InvPC->Server_MoveItem(ThisInv, OtherInv, ItemID, Quantity, EInv_MoveReason::Buy);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[INV][MMB] blocked: unsupported grid context PlayerOwned=%d UIMode=%d"),
+				bPlayerOwnedInventory, (int32)UIMode);
+		}
 
 		UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
 		return;

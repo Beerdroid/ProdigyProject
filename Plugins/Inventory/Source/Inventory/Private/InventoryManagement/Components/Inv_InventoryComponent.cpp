@@ -638,10 +638,12 @@ void UInv_InventoryComponent::OpenExternalInventoryUI(UInv_InventoryComponent* I
 	if (!IsValid(InExternal)) return;
 
 	// Unbind previous external
-	if (IsValid(ExternalInventoryComp))
+	if (IsValid(InExternal) && InExternal->ExternalInventoryComp != this)
 	{
-		ExternalInventoryComp->OnInvDelta.RemoveAll(this);
+		InExternal->ExternalInventoryComp = this;
+		InExternal->bExternalMenuOpen = true; // optional, but helps if you gate logic by this
 	}
+
 
 	ExternalInventoryComp = InExternal;
 	bExternalMenuOpen = true;
