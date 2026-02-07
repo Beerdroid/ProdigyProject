@@ -18,8 +18,6 @@ UQuestLogComponent::UQuestLogComponent()
 	QuestStates.Owner = this;
 }
 
-
-
 void UQuestLogComponent::BeginPlay()
 {
 	Super::BeginPlay();
@@ -62,10 +60,8 @@ void UQuestLogComponent::BindIntegration()
 	AActor* OwnerActor = GetOwner();
 	if (!OwnerActor) return;
 
-	// If QuestLog is on PC, this hits immediately.
+	// Resolve PC
 	APlayerController* PC = Cast<APlayerController>(OwnerActor);
-
-	// If QuestLog is on Pawn, resolve controller.
 	if (!PC)
 	{
 		if (APawn* Pawn = Cast<APawn>(OwnerActor))
@@ -74,38 +70,59 @@ void UQuestLogComponent::BindIntegration()
 		}
 	}
 
-	UQuestIntegrationComponent* Integration = PC ? PC->FindComponentByClass<UQuestIntegrationComponent>() : nullptr;
+	UQuestIntegrationComponent* NewIntegration = PC ? PC->FindComponentByClass<UQuestIntegrationComponent>() : nullptr;
 
-	UE_LOG(LogTemp, Warning, TEXT("QuestLog BindIntegration: Owner=%s PC=%s Integration=%s"),
-		*GetNameSafe(OwnerActor),
-		*GetNameSafe(PC),
-		*GetNameSafe(Integration));
-
-	InventoryProvider = nullptr;
-	RewardReceiver = nullptr;
-	KillEventSource = nullptr;
-	CachedIntegrationComponent = nullptr;
-
-	if (!IsValid(Integration))
+	// 1) Unbind from old cached integration (IMPORTANT: do this BEFORE clearing!)
+	if (IsValid(CachedIntegrationComponent))
 	{
-		bIntegrationBound = false;
+		CachedIntegrationComponent->OnQuestItemChanged.RemoveAll(this);
+
+		// If you bind kill delegate through the same integration object, also remove here
+		// (Only if you previously bound it to this)
+		if (IQuestKillEventSource* KillIface = Cast<IQuestKillEventSource>(CachedIntegrationComponent))
+		{
+			FOnQuestKillTagNative& KillDelegate = KillIface->GetKillDelegate();
+			KillDelegate.RemoveAll(this);
+		}
+	}
+
+	// 2) Clear script interfaces properly
+	InventoryProvider.SetObject(nullptr);
+	InventoryProvider.SetInterface(nullptr);
+
+	RewardReceiver.SetObject(nullptr);
+	RewardReceiver.SetInterface(nullptr);
+
+	KillEventSource.SetObject(nullptr);
+	KillEventSource.SetInterface(nullptr);
+
+	CachedIntegrationComponent = nullptr;
+	bIntegrationBound = false;
+
+	// 3) If no new integration, we’re done
+	if (!IsValid(NewIntegration))
+	{
 		return;
 	}
 
-	InventoryProvider.SetObject(Integration);
-	RewardReceiver.SetObject(Integration);
-	KillEventSource.SetObject(Integration);
-	CachedIntegrationComponent = Integration;
+	// 4) Set providers to the new integration (adapter)
+	InventoryProvider.SetObject(NewIntegration);
+	InventoryProvider.SetInterface(Cast<IQuestInventoryProvider>(NewIntegration));
 
-	// Bind delegates through cast at bind-time (robust for BP child)
-	if (IQuestInventoryProvider* InvIface = Cast<IQuestInventoryProvider>(Integration))
-	{
-		FOnQuestInventoryDelta& InvDelta = InvIface->GetInventoryDeltaDelegate();
-		InvDelta.RemoveAll(this);
-		InvDelta.AddDynamic(this, &UQuestLogComponent::HandleInventoryDelta);
-	}
+	RewardReceiver.SetObject(NewIntegration);
+	RewardReceiver.SetInterface(Cast<IQuestRewardReceiver>(NewIntegration));
 
-	if (IQuestKillEventSource* KillIface = Cast<IQuestKillEventSource>(Integration))
+	KillEventSource.SetObject(NewIntegration);
+	KillEventSource.SetInterface(Cast<IQuestKillEventSource>(NewIntegration));
+
+	CachedIntegrationComponent = NewIntegration;
+
+	// 5) Bind simplified delegate
+	NewIntegration->OnQuestItemChanged.RemoveAll(this);
+	NewIntegration->OnQuestItemChanged.AddDynamic(this, &UQuestLogComponent::HandleQuestItemChanged);
+
+	// 6) Bind kill delegate (native)
+	if (IQuestKillEventSource* KillIface = Cast<IQuestKillEventSource>(NewIntegration))
 	{
 		FOnQuestKillTagNative& KillDelegate = KillIface->GetKillDelegate();
 		KillDelegate.RemoveAll(this);
@@ -705,43 +722,25 @@ bool UQuestLogComponent::TryGetQuestDef(FName QuestID, FQuestDefinition& OutDef)
 	return QuestDatabase->TryGetQuest(QuestID, OutDef);
 }
 
-void UQuestLogComponent::HandleInventoryDelta(const FInventoryDelta& Delta)
+
+void UQuestLogComponent::HandleQuestItemChanged(FName ItemID)
 {
-	UE_LOG(LogTemp, Warning, TEXT("QuestLog HandleInventoryDelta Owner=%s HasAuthority=%d NetMode=%d Item=%s Delta=%d"),
-	*GetNameSafe(GetOwner()),
-	GetOwner() ? (int32)GetOwner()->HasAuthority() : -1,
-	(int32)GetNetMode(),
-	*Delta.ItemID.ToString(),
-	Delta.DeltaQuantity);
-
-	UE_LOG(LogTemp, Warning, TEXT("HandleInventoryDelta: quests=%d"), QuestStates.Items.Num());
-	
-	
+	if (ItemID.IsNone()) return;
 	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
-	if (Delta.ItemID.IsNone()) return;
-
-	BindIntegration();
 
 	bool bAnyChanged = false;
-
 	for (FQuestRuntimeState& State : QuestStates.Items)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Quest=%s completed=%d"), *State.QuestID.ToString(), State.bIsCompleted);
 		if (State.bIsTurnedIn) continue;
 
 		FQuestDefinition Def;
 		if (!TryGetQuestDef(State.QuestID, Def)) continue;
 
 		const bool bBeforeCompleted = State.bIsCompleted;
-
-		const bool bProgressChanged = RecomputeCollectObjectives_SingleItem(State, Def, Delta.ItemID);
-
+		const bool bProgressChanged = RecomputeCollectObjectives_SingleItem(State, Def, ItemID);
 		TryCompleteQuest(State, Def);
 
-		if (bProgressChanged || (State.bIsCompleted != bBeforeCompleted))
-		{
-			bAnyChanged = true;
-		}
+		bAnyChanged |= bProgressChanged || (State.bIsCompleted != bBeforeCompleted);
 	}
 
 	if (bAnyChanged)
@@ -751,7 +750,7 @@ void UQuestLogComponent::HandleInventoryDelta(const FInventoryDelta& Delta)
 }
 
 bool UQuestLogComponent::RecomputeCollectObjectives_SingleItem(FQuestRuntimeState& State, const FQuestDefinition& Def,
-	FName ChangedItemID)
+                                                               FName ChangedItemID)
 {
 	UE_LOG(LogTemp, Warning, TEXT("RecomputeSingleItem ENTER: providerObj=%s"), *GetNameSafe(InventoryProvider.GetObject()));
 	if (!InventoryProvider || !InventoryProvider.GetObject())

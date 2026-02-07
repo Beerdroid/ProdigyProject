@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Player/Inv_PlayerController.h"
 #include "GameplayTagContainer.h"
+#include "ProdigyInventory/InvPlayerController.h"
 #include "Quest/Interfaces/QuestInventoryProvider.h"
 #include "ProdigyPlayerController.generated.h"
 
@@ -13,7 +14,7 @@ class UQuestIntegrationComponent;
 
 
 UCLASS()
-class PRODIGYPROJECT_API AProdigyPlayerController : public AInv_PlayerController
+class PRODIGYPROJECT_API AProdigyPlayerController : public AInvPlayerController
 {
 	GENERATED_BODY()
 
@@ -55,6 +56,4 @@ protected:
 
 private:
 	void CacheQuestComponents();
-	
-	FOnQuestInventoryDelta DummyInventoryDelta;
 };

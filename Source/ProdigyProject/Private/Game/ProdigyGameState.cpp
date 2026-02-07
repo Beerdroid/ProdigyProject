@@ -1,23 +1,32 @@
 ﻿#include "Game/ProdigyGameState.h"
 
-#include "Data/DataBase/ProdigyItemDatabase.h"
+#include "ProdigyInventory/ItemTypes.h"
 
-bool AProdigyGameState::FindItemManifest_Implementation(FName ItemID, FInv_ItemManifest& OutManifest) const
+bool AProdigyGameState::GetItemRowByID_Implementation(FName ItemID, FItemRow& OutRow) const
 {
-	if (!ItemDatabase)
-	{
-		return false;
-	}
-	return ItemDatabase->FindManifest(ItemID, OutManifest);
-}
+	OutRow = FItemRow();
 
-void AProdigyGameState::BeginPlay()
-{
-	Super::BeginPlay();
+	if (ItemID.IsNone() || !IsValid(ItemDataTable)) return false;
 
-	// Optional: build cache early so the first BP call is cheap and predictable.
-	if (ItemDatabase)
+	static const FString Context(TEXT("AProdigyGameState::GetItemRowByID"));
+
+	// Recommended: RowName == ItemID (fast path)
+	if (const FItemRow* Row = ItemDataTable->FindRow<FItemRow>(ItemID, Context, /*bWarn*/ false))
 	{
-		ItemDatabase->BuildCacheIfNeeded();
+		OutRow = *Row;
+		return true;
 	}
+
+	// Optional fallback if your RowName != ItemID
+	for (const auto& Pair : ItemDataTable->GetRowMap())
+	{
+		const FItemRow* R = reinterpret_cast<const FItemRow*>(Pair.Value);
+		if (R && R->ItemID == ItemID)
+		{
+			OutRow = *R;
+			return true;
+		}
+	}
+
+	return false;
 }

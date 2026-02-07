@@ -12,6 +12,7 @@
 #include "Items/Fragments/Inv_FragmentTags.h"
 #include "Items/Fragments/Inv_ItemFragment.h"
 
+
 static void CenterWidgetInViewport(
 	UUserWidget* Widget,
 	APlayerController* PC,
@@ -710,6 +711,8 @@ void UInv_InventoryComponent::ApplyGameOnlyInputMode()
 {
 	if (!OwningController.IsValid()) return;
 
+	UE_LOG(LogTemp, Warning, TEXT("ApplyGameOnlyInputMode 1"));
+
 	FInputModeGameOnly InputMode;
 	InputMode.SetConsumeCaptureMouseDown(false);
 
@@ -793,6 +796,7 @@ void UInv_InventoryComponent::BeginPlay()
 
 	ConstructInventory();              // player local UI only
 	InventoryList.OwnerComponent = this;
+
 }
 
 void UInv_InventoryComponent::ReadyForReplication()
@@ -1076,6 +1080,8 @@ void UInv_InventoryComponent::ApplyGameAndUIInputMode()
 {
 	if (!OwningController.IsValid()) return;
 
+	UE_LOG(LogTemp, Warning, TEXT("ApplyGameOnlyInputMode 2"));
+
 	FInputModeGameAndUI InputMode;
 	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 	InputMode.SetHideCursorDuringCapture(false);
@@ -1137,6 +1143,8 @@ void UInv_InventoryComponent::OpenInventoryMenu()
 {
 	if (!IsValid(InventoryMenu) || !OwningController.IsValid()) return;
 
+	UE_LOG(LogTemp, Warning, TEXT("ApplyGameOnlyInputMode 3"));
+
 	InventoryMenu->SetIsEnabled(true);
 	InventoryMenu->SetVisibility(ESlateVisibility::Visible);
 	bInventoryMenuOpen = true;
@@ -1166,6 +1174,7 @@ void UInv_InventoryComponent::CloseInventoryMenu()
 	FInputModeGameOnly InputMode;
 	InputMode.SetConsumeCaptureMouseDown(false);
 	OwningController->SetInputMode(InputMode);
+	UE_LOG(LogTemp, Warning, TEXT("ApplyGameOnlyInputMode 4"));
 
 	OwningController->SetShowMouseCursor(true);
 	OwningController->bEnableClickEvents = true;

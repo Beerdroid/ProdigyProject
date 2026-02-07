@@ -7,6 +7,7 @@
 #include "QuestDatabase.h"
 #include "QuestLogComponent.generated.h"
 
+class UQuestIntegrationComponent;
 class IQuestKillEventSource;
 class IQuestRewardReceiver;
 class IQuestInventoryProvider;
@@ -100,7 +101,7 @@ public:
 	void ServerNotifyObjectiveEvent(FName QuestID, FName ObjectiveID, UObject* Context);
 
 	UFUNCTION()
-	void HandleInventoryDelta(const FInventoryDelta& Delta);
+	void HandleQuestItemChanged(FName ItemID);
 
 	bool RecomputeCollectObjectives_SingleItem(FQuestRuntimeState& State, const FQuestDefinition& Def, FName ChangedItemID);
 
@@ -118,7 +119,7 @@ protected:
 
 private:
 	UPROPERTY()
-	TObjectPtr<UActorComponent> CachedIntegrationComponent;
+	TObjectPtr<UQuestIntegrationComponent> CachedIntegrationComponent;
 
 	void NotifyQuestStatesChanged_LocalAuthority();
 
