@@ -85,6 +85,7 @@ struct FInventorySlotView
 	// resolved presentation
 	UPROPERTY(BlueprintReadOnly) FText DisplayName;
 	UPROPERTY(BlueprintReadOnly) FText Description;
+	UPROPERTY(BlueprintReadOnly) int32 Price;
 
 	// keep soft to avoid forcing sync loads in slot widget
 	UPROPERTY(BlueprintReadOnly) TSoftObjectPtr<UTexture2D> Icon;

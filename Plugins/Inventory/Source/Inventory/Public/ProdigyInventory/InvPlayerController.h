@@ -11,6 +11,15 @@ class UInputMappingContext;
 class UInventoryComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnActiveExternalInventoryChanged, UInventoryComponent*, NewExternal);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnGoldChanged, int32, NewGold);
+
+UENUM(BlueprintType)
+enum class EInvAction : uint8
+{
+	DragDrop,     // normal drop
+	QuickUse,     // right click
+	AutoMove      // shift click
+};
 
 UCLASS()
 class INVENTORY_API AInvPlayerController : public APlayerController
@@ -173,6 +182,11 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void ToggleInventory();
 
+	UPROPERTY(EditDefaultsOnly, Category="UI")
+	int32 MaxInteractDistance = 200;
+
+	bool CanUseExternalInventory(const UInventoryComponent* External, const AActor* ExternalOwner) const;
+
 	UFUNCTION(BlueprintCallable)
 	void OpenExternalInventoryFromActor(AActor* ActorWithInventory);
 
@@ -181,6 +195,37 @@ public:
 
 	UPROPERTY()
 	bool bInventoryOpen;
+
+	UFUNCTION(BlueprintCallable, Category="Inventory")
+	bool ExecuteInventoryAction(
+		UInventoryComponent* Source,
+		int32 SourceIndex,
+		UInventoryComponent* Target,
+		int32 TargetIndex,
+		int32 Quantity,
+		EInvAction Action,
+		bool bAllowSwap = true,
+		bool bFullOnly = false);
+
+	void EnsurePlayerInventoryResolved();
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Economy")
+	int32 Gold = 0;
+
+	UFUNCTION(BlueprintCallable, Category="Economy")
+	bool CanAfford(int32 Amount) const { return Amount >= 0 && Gold >= Amount; }
+
+	UFUNCTION(BlueprintCallable, Category="Economy")
+	void AddGold(int32 Delta);
+
+	UFUNCTION(BlueprintCallable, Category="Economy")
+	void SetGold(int32 NewGold);
+
+	UFUNCTION(BlueprintCallable, Category="Economy")
+	bool TryGetItemPrice(FName ItemID, int32& OutSellValue) const;
+
+	UPROPERTY(BlueprintAssignable, Category="Economy|Events")
+	FOnGoldChanged OnGoldChanged;
 	
 private:
 	UPROPERTY(EditDefaultsOnly, Category="Movement|FX")
@@ -198,7 +243,7 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category="Inventory|Drop")
 	float DropHeightTrace = 5000.f;
 	
-	void EnsurePlayerInventoryResolved();
+
 
 	/** A simple drop point in front of the camera/controller. */
 	void GetDropTransform(FVector& OutLoc, FRotator& OutRot) const;

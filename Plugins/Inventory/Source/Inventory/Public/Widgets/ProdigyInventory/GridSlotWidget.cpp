@@ -19,12 +19,12 @@ void UGridSlotWidget::InitSlot(UInventoryComponent* InInventory, int32 InIndex, 
 void UGridSlotWidget::SetSlotView(const FInventorySlotView& View)
 {
 	UE_LOG(LogTemp, Warning, TEXT("SetSlotView slot=%d empty=%d qty=%d item=%s"),
-	SlotIndex, (int32)View.bEmpty, View.Quantity, *View.ItemID.ToString());
+	       SlotIndex, (int32)View.bEmpty, View.Quantity, *View.ItemID.ToString());
 
 	CachedView = View;
 
 	bIsEmptyCached = View.bEmpty;
-	
+
 	// Item icon
 	if (IsValid(ItemIcon))
 	{
@@ -100,14 +100,14 @@ FReply UGridSlotWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, con
 				return FReply::Handled();
 			}
 		}
-		
+
 		const bool bHasItem =
 			Inventory.IsValid() &&
 			SlotIndex != INDEX_NONE &&
 			!Inventory->GetSlot(SlotIndex).IsEmpty();
 
 		UE_LOG(LogTemp, Warning, TEXT("MouseDown slot=%d hasItem=%d vis=%d"),
-			SlotIndex, bHasItem ? 1 : 0, (int32)GetVisibility());
+		       SlotIndex, bHasItem ? 1 : 0, (int32)GetVisibility());
 
 		if (bHasItem)
 		{
@@ -128,11 +128,79 @@ FReply UGridSlotWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, con
 		return FReply::Unhandled();
 	}
 
+	if (InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton)
+	{
+		AInvPlayerController* PC = GetOwningPlayer<AInvPlayerController>();
+		if (!IsValid(PC)) return FReply::Handled();
+
+		// Slot inventory is THIS widget's Inventory
+		UInventoryComponent* ThisInv = Inventory.Get();
+		if (!IsValid(ThisInv)) return FReply::Handled();
+
+		PC->EnsurePlayerInventoryResolved();
+		UInventoryComponent* PlayerInv = PC->InventoryComponent.Get();
+		UInventoryComponent* ExternalInv = PC->ExternalInventory.Get();
+
+		// Decide target by context
+		if (ThisInv->InventoryType == EInventoryType::Merchant && IsValid(PlayerInv))
+		{
+			// BUY: merchant -> player (auto place into player inventory is nicer than targeting a slot)
+			TArray<int32> ChangedS, ChangedT;
+			// You can call AutoTransferTo_NoSwap if you implement it; otherwise pick a target slot (like first empty).
+			const int32 TargetSlot = PlayerInv->FindFirstEmptySlot();
+			if (TargetSlot != INDEX_NONE)
+			{
+				PC->ExecuteInventoryAction(ThisInv, SlotIndex, PlayerInv, TargetSlot, 1, EInvAction::QuickUse, /*swap*/
+				                           false, /*full*/false);
+			}
+			return FReply::Handled();
+		}
+
+		if (ThisInv->InventoryType == EInventoryType::Player && IsValid(ExternalInv) && ExternalInv->InventoryType ==
+			EInventoryType::Merchant)
+		{
+			// SELL: player -> merchant
+			const int32 TargetSlot = ExternalInv->FindFirstEmptySlot();
+			if (TargetSlot != INDEX_NONE)
+			{
+				PC->ExecuteInventoryAction(ThisInv, SlotIndex, ExternalInv, TargetSlot, 1, EInvAction::QuickUse,
+				                           /*swap*/false, /*full*/false);
+			}
+			return FReply::Handled();
+		}
+
+		// Container move RMB behavior (optional): move to the "other side"
+		if (ThisInv->InventoryType == EInventoryType::Player && IsValid(ExternalInv))
+		{
+			const int32 TargetSlot = ExternalInv->FindFirstEmptySlot();
+			if (TargetSlot != INDEX_NONE)
+			{
+				PC->ExecuteInventoryAction(ThisInv, SlotIndex, ExternalInv, TargetSlot, -1, EInvAction::AutoMove,
+				                           /*swap*/true, /*full*/false);
+			}
+			return FReply::Handled();
+		}
+
+		if (IsValid(PlayerInv) && ThisInv != PlayerInv)
+		{
+			const int32 TargetSlot = PlayerInv->FindFirstEmptySlot();
+			if (TargetSlot != INDEX_NONE)
+			{
+				PC->ExecuteInventoryAction(ThisInv, SlotIndex, PlayerInv, TargetSlot, -1, EInvAction::AutoMove, /*swap*/
+				                           true, /*full*/false);
+			}
+			return FReply::Handled();
+		}
+
+		return FReply::Handled();
+	}
+
 	// 3) Everything else: fallback to parent behavior
 	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
 }
 
-void UGridSlotWidget::NativeOnDragDetected(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent, UDragDropOperation*& OutOperation)
+void UGridSlotWidget::NativeOnDragDetected(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent,
+                                           UDragDropOperation*& OutOperation)
 {
 	Super::NativeOnDragDetected(InGeometry, InMouseEvent, OutOperation);
 
@@ -186,10 +254,10 @@ bool UGridSlotWidget::NativeOnDrop(
 	}
 
 	UE_LOG(LogTemp, Warning,
-		TEXT("[SLOT DROP] Slot=%d SrcIdx=%d SrcInv=%s"),
-		SlotIndex,
-		Op->SourceIndex,
-		*GetNameSafe(Op->SourceInventory));
+	       TEXT("[SLOT DROP] Slot=%d SrcIdx=%d SrcInv=%s"),
+	       SlotIndex,
+	       Op->SourceIndex,
+	       *GetNameSafe(Op->SourceInventory));
 
 	UInventoryComponent* SourceInv = Op->SourceInventory;
 	UInventoryComponent* TargetInv = Inventory.Get();
@@ -227,8 +295,8 @@ bool UGridSlotWidget::NativeOnDrop(
 	}
 
 	UE_LOG(LogTemp, Warning,
-		TEXT("[SLOT DROP] Result=%d"),
-		bOk ? 1 : 0);
+	       TEXT("[SLOT DROP] Result=%d"),
+	       bOk ? 1 : 0);
 
 	if (bOk)
 	{
@@ -243,7 +311,7 @@ void UGridSlotWidget::NativeOnMouseEnter(const FGeometry& InGeometry, const FPoi
 	Super::NativeOnMouseEnter(InGeometry, InMouseEvent);
 
 	UE_LOG(LogTemp, Warning, TEXT("MouseEnter slot=%d empty=%d OwnerMenu=%s vis=%d"),
-		SlotIndex, CachedView.bEmpty ? 1 : 0, *GetNameSafe(OwnerMenu.Get()), (int32)GetVisibility());
+	       SlotIndex, CachedView.bEmpty ? 1 : 0, *GetNameSafe(OwnerMenu.Get()), (int32)GetVisibility());
 
 	if (CachedView.bEmpty) return;
 

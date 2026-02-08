@@ -29,4 +29,13 @@ void UInvItemTooltipWidget::SetView(const FInventorySlotView& View)
 	{
 		DescText->SetText(View.bEmpty ? FText::GetEmpty() : View.Description);
 	}
+
+	if (IsValid(PriceText))
+	{
+		PriceText->SetText(
+			View.bEmpty
+				? FText::GetEmpty()
+				: FText::AsNumber(View.Price)
+		);
+	}
 }

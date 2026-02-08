@@ -5,6 +5,8 @@
 #include "ProdigyInventory/ItemTypes.h"
 #include "InventoryWidgetBase.generated.h"
 
+class AInvPlayerController;
+class UTextBlock;
 class UInvSplitCursorWidget;
 class UInvContextMenuWidget;
 class UGridSlotWidget;
@@ -24,6 +26,9 @@ public:
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 	void UpdateSplitCursorPosition();
+
+	UPROPERTY()
+	TWeakObjectPtr<AInvPlayerController> CachedPC;
 	
 	// Called by PlayerController
 	UFUNCTION(BlueprintCallable, Category="Inventory|UI")
@@ -127,6 +132,12 @@ private:
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UGridSlotWidget>> SlotWidgets;
+
+	UPROPERTY(meta=(BindWidgetOptional))
+	TObjectPtr<UTextBlock> GoldText = nullptr;
+
+	UFUNCTION()
+	void HandleGoldChanged(int32 NewGold);
 
 	UPROPERTY(Transient)
 	bool bSplitMode = false;

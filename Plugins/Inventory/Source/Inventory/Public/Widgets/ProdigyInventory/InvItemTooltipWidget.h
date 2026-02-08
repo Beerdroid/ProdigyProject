@@ -21,4 +21,5 @@ protected:
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UImage> ItemIcon = nullptr;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UTextBlock> NameText = nullptr;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UTextBlock> DescText = nullptr;
+	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UTextBlock> PriceText = nullptr;
 };

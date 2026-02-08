@@ -9,6 +9,7 @@
 #include "ProdigyInventory/InventoryComponent.h"
 #include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
+#include "ProdigyInventory/InventoryItemDBProvider.h"
 #include "ProdigyInventory/InvHighlightable.h"
 #include "ProdigyInventory/ItemComponent.h"
 #include "Widgets/ProdigyInventory/InventoryWidgetBase.h"
@@ -42,71 +43,114 @@ static void ApplyTopDownMouseCaptureMode()
 	}
 }
 
-static bool PlaceWidgetInViewport(
-	UUserWidget* Widget,
-	APlayerController* PC,
-	const FVector2D& ViewportAnchor = FVector2D(0.5f, 0.5f),
-	const FVector2D& Alignment      = FVector2D(0.5f, 0.5f),
-	const FVector2D& AnchorOffsetPx = FVector2D::ZeroVector,
-	UUserWidget* RelativeTo         = nullptr,
-	EWidgetSide Side                = EWidgetSide::None,
-	float GapPx                     = 0.f,
-	const FVector2D& ForcedSize     = FVector2D::ZeroVector,
-	bool bRemoveDPIScale            = true
-)
+static FVector2D ClampWidgetPosToViewport(
+	const FVector2D& DesiredPos,
+	const FVector2D& WidgetSize,
+	const FVector2D& ViewportSize,
+	const FVector2D& PaddingPx)
 {
-	if (!IsValid(Widget) || !IsValid(PC)) return false;
+	FVector2D P = DesiredPos;
 
-	if (!ForcedSize.IsNearlyZero())
-	{
-		Widget->SetDesiredSizeInViewport(ForcedSize);
-	}
+	// clamp left/top
+	P.X = FMath::Max(PaddingPx.X, P.X);
+	P.Y = FMath::Max(PaddingPx.Y, P.Y);
+
+	// clamp right/bottom
+	P.X = FMath::Min(P.X, ViewportSize.X - WidgetSize.X - PaddingPx.X);
+	P.Y = FMath::Min(P.Y, ViewportSize.Y - WidgetSize.Y - PaddingPx.Y);
+
+	return P;
+}
+
+static void PlaceSingleWidgetRight(
+	APlayerController* PC,
+	UUserWidget* Widget,
+	FVector2D PaddingPx = FVector2D(16.f, 16.f),
+	bool bRemoveDPIScale = true)
+{
+	if (!IsValid(PC) || !IsValid(Widget)) return;
 
 	int32 VX = 0, VY = 0;
 	PC->GetViewportSize(VX, VY);
-	if (VX <= 0 || VY <= 0) return false;
-
-	Widget->ForceLayoutPrepass();
-	if (RelativeTo) RelativeTo->ForceLayoutPrepass();
+	if (VX <= 0 || VY <= 0) return;
 
 	const FVector2D ViewportSize((float)VX, (float)VY);
-	const FVector2D AnchorPos(ViewportSize.X * ViewportAnchor.X, ViewportSize.Y * ViewportAnchor.Y);
 
-	FVector2D ThisSize = Widget->GetDesiredSize();
-	if (ThisSize.IsNearlyZero() && !ForcedSize.IsNearlyZero())
+	Widget->ForceLayoutPrepass();
+	FVector2D Size = Widget->GetDesiredSize();
+	if (Size.IsNearlyZero()) return;
+
+	// Right-center
+	const float CenterY = ViewportSize.Y * 0.5f;
+	FVector2D Pos(ViewportSize.X - PaddingPx.X - Size.X, CenterY - Size.Y * 0.5f);
+
+	Pos = ClampWidgetPosToViewport(Pos, Size, ViewportSize, PaddingPx);
+
+	Widget->SetAlignmentInViewport(FVector2D(0.f, 0.f));
+	Widget->SetPositionInViewport(Pos, bRemoveDPIScale);
+}
+
+static void PlaceWidgetInViewport(
+	APlayerController* PC,
+	UUserWidget* LeftWidget, // external
+	UUserWidget* RightWidget, // player
+	float GapPx = 16.f,
+	FVector2D PaddingPx = FVector2D(16.f, 16.f),
+	bool bRemoveDPIScale = true
+)
+{
+	if (!IsValid(PC) || !IsValid(LeftWidget) || !IsValid(RightWidget)) return;
+
+	int32 VX = 0, VY = 0;
+	PC->GetViewportSize(VX, VY);
+	if (VX <= 0 || VY <= 0) return;
+
+	const FVector2D ViewportSize((float)VX, (float)VY);
+
+	LeftWidget->ForceLayoutPrepass();
+	RightWidget->ForceLayoutPrepass();
+
+	FVector2D LSize = LeftWidget->GetDesiredSize();
+	FVector2D RSize = RightWidget->GetDesiredSize();
+
+	// If desired size isn't ready, bail safely (UMG sometimes reports 0 on first frame)
+	if (LSize.IsNearlyZero() || RSize.IsNearlyZero()) return;
+
+	// Can we fit side-by-side?
+	const float NeededWidth = PaddingPx.X + LSize.X + GapPx + RSize.X + PaddingPx.X;
+	const bool bSideBySide = (ViewportSize.X >= NeededWidth);
+
+	// Choose positions (top-left anchored coords)
+	FVector2D LPos, RPos;
+
+	if (bSideBySide)
 	{
-		ThisSize = ForcedSize;
+		// Side-by-side, centered vertically
+		const float CenterY = ViewportSize.Y * 0.5f;
+
+		LPos = FVector2D(PaddingPx.X, CenterY - LSize.Y * 0.5f);
+		RPos = FVector2D(ViewportSize.X - PaddingPx.X - RSize.X, CenterY - RSize.Y * 0.5f);
+	}
+	else
+	{
+		// Stack vertically (external on top, player on bottom)
+		// Center horizontally for each widget
+		const float CenterX = ViewportSize.X * 0.5f;
+
+		LPos = FVector2D(CenterX - LSize.X * 0.5f, PaddingPx.Y);
+		RPos = FVector2D(CenterX - RSize.X * 0.5f, ViewportSize.Y - PaddingPx.Y - RSize.Y);
 	}
 
-	Widget->SetAlignmentInViewport(Alignment);
+	// Clamp to viewport
+	LPos = ClampWidgetPosToViewport(LPos, LSize, ViewportSize, PaddingPx);
+	RPos = ClampWidgetPosToViewport(RPos, RSize, ViewportSize, PaddingPx);
 
-	// Base position is the anchor point + offset
-	FVector2D FinalPos = AnchorPos + AnchorOffsetPx;
+	// Apply in viewport (top-left alignment)
+	LeftWidget->SetAlignmentInViewport(FVector2D(0.f, 0.f));
+	RightWidget->SetAlignmentInViewport(FVector2D(0.f, 0.f));
 
-	// If placing relative to another widget, compute edge-to-edge placement.
-	if (RelativeTo && Side != EWidgetSide::None)
-	{
-		const FVector2D OtherSize = RelativeTo->GetDesiredSize();
-
-		// RelativeTo's anchor in viewport is not known here; so we assume RelativeTo is already positioned,
-		// and we place next to it using its current viewport position.
-		// (UMG doesn't expose a reliable "viewport rect" without geometry, so keep it simple.)
-		// If you need true relative placement, pass RelativeTo's anchor/pos explicitly instead.
-
-		// Fallback behavior: treat "RelativeTo" as centered at the same anchor.
-		// (This keeps your helper deterministic.)
-		switch (Side)
-		{
-		case EWidgetSide::Left:   FinalPos.X -= (OtherSize.X * (1.f - Alignment.X)) + (ThisSize.X * Alignment.X) + GapPx; break;
-		case EWidgetSide::Right:  FinalPos.X += (OtherSize.X * Alignment.X)       + (ThisSize.X * (1.f - Alignment.X)) + GapPx; break;
-		case EWidgetSide::Top:    FinalPos.Y -= (OtherSize.Y * (1.f - Alignment.Y)) + (ThisSize.Y * Alignment.Y) + GapPx; break;
-		case EWidgetSide::Bottom: FinalPos.Y += (OtherSize.Y * Alignment.Y)       + (ThisSize.Y * (1.f - Alignment.Y)) + GapPx; break;
-		default: break;
-		}
-	}
-
-	Widget->SetPositionInViewport(FinalPos, bRemoveDPIScale);
-	return true;
+	LeftWidget->SetPositionInViewport(LPos, bRemoveDPIScale);
+	RightWidget->SetPositionInViewport(RPos, bRemoveDPIScale);
 }
 
 void AInvPlayerController::BeginPlay()
@@ -115,7 +159,7 @@ void AInvPlayerController::BeginPlay()
 	EnsurePlayerInventoryResolved();
 
 	UEnhancedInputLocalPlayerSubsystem* Subsystem =
-	ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer());
+		ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer());
 	if (IsValid(Subsystem))
 	{
 		Subsystem->AddMappingContext(DefaultIMC, 0);
@@ -144,7 +188,7 @@ void AInvPlayerController::SetupInputComponent()
 	Super::SetupInputComponent();
 
 	UE_LOG(LogTemp, Warning, TEXT("SetupInputComponent called on %s (Class=%s)"),
-		*GetNameSafe(this), *GetClass()->GetName());
+	       *GetNameSafe(this), *GetClass()->GetName());
 
 	UEnhancedInputComponent* EnhancedInputComponent =
 		CastChecked<UEnhancedInputComponent>(InputComponent);
@@ -152,7 +196,7 @@ void AInvPlayerController::SetupInputComponent()
 	EnhancedInputComponent->BindAction(
 		PrimaryInteractAction, ETriggerEvent::Started, this, &AInvPlayerController::PrimaryInteract);
 	EnhancedInputComponent->BindAction(
-	ToggleInventoryAction, ETriggerEvent::Started, this, &AInvPlayerController::ToggleInventory);
+		ToggleInventoryAction, ETriggerEvent::Started, this, &AInvPlayerController::ToggleInventory);
 
 	// TopDown click/hold movement
 	if (SetDestinationClickAction)
@@ -160,9 +204,11 @@ void AInvPlayerController::SetupInputComponent()
 		EnhancedInputComponent->BindAction(
 			SetDestinationClickAction, ETriggerEvent::Started, this, &AInvPlayerController::OnSetDestinationStarted);
 		EnhancedInputComponent->BindAction(
-			SetDestinationClickAction, ETriggerEvent::Triggered, this, &AInvPlayerController::OnSetDestinationTriggered);
+			SetDestinationClickAction, ETriggerEvent::Triggered, this,
+			&AInvPlayerController::OnSetDestinationTriggered);
 		EnhancedInputComponent->BindAction(
-			SetDestinationClickAction, ETriggerEvent::Completed, this, &AInvPlayerController::OnSetDestinationCompleted);
+			SetDestinationClickAction, ETriggerEvent::Completed, this,
+			&AInvPlayerController::OnSetDestinationCompleted);
 		EnhancedInputComponent->BindAction(
 			SetDestinationClickAction, ETriggerEvent::Canceled, this, &AInvPlayerController::OnSetDestinationCanceled);
 	}
@@ -186,9 +232,42 @@ void AInvPlayerController::EnsurePlayerInventoryResolved()
 	}
 
 	INV_PICKUP_LOG(Log, TEXT("EnsurePlayerInventoryResolved: Resolved=%s (OnPC=%d OnPawn=%d)"),
-	*GetNameSafe(InventoryComponent.Get()),
-	FindComponentByClass<UInventoryComponent>() != nullptr ? 1 : 0,
-	P->FindComponentByClass<UInventoryComponent>() != nullptr ? 1 : 0);
+	               *GetNameSafe(InventoryComponent.Get()),
+	               FindComponentByClass<UInventoryComponent>() != nullptr ? 1 : 0,
+	               P->FindComponentByClass<UInventoryComponent>() != nullptr ? 1 : 0);
+}
+
+void AInvPlayerController::AddGold(int32 Delta)
+{
+	const int32 Old = Gold;
+	Gold = FMath::Max(0, Gold + Delta);
+
+	if (Gold != Old)
+	{
+		OnGoldChanged.Broadcast(Gold);
+	}
+}
+
+
+void AInvPlayerController::SetGold(int32 NewGold)
+{
+	NewGold = FMath::Max(0, NewGold);
+	if (Gold == NewGold) return;
+
+	Gold = NewGold;
+	OnGoldChanged.Broadcast(Gold);
+}
+
+bool AInvPlayerController::TryGetItemPrice(FName ItemID, int32& OutSellValue) const
+{
+	OutSellValue = 0;
+	if (!InventoryComponent.IsValid() || ItemID.IsNone()) return false;
+
+	FItemRow Row;
+	if (!InventoryComponent->TryGetItemDef(ItemID, Row)) return false;
+
+	OutSellValue = FMath::Max(0, Row.SellValue);
+	return true;
 }
 
 void AInvPlayerController::SetExternalInventory(UInventoryComponent* NewExternal)
@@ -219,7 +298,8 @@ bool AInvPlayerController::Player_MoveOrSwap(int32 FromIndex, int32 ToIndex, TAr
 	return InventoryComponent->MoveOrSwap(FromIndex, ToIndex, OutChanged);
 }
 
-bool AInvPlayerController::Player_SplitStack(int32 FromIndex, int32 ToIndex, int32 SplitAmount, TArray<int32>& OutChanged)
+bool AInvPlayerController::Player_SplitStack(int32 FromIndex, int32 ToIndex, int32 SplitAmount,
+                                             TArray<int32>& OutChanged)
 {
 	EnsurePlayerInventoryResolved();
 	if (!InventoryComponent.IsValid()) return false;
@@ -257,7 +337,7 @@ void AInvPlayerController::GetDropTransform(FVector& OutLoc, FRotator& OutRot) c
 	// Ground snap
 	FHitResult Hit;
 	const FVector TraceStart = Desired + FVector(0.f, 0.f, DropHeightTrace);
-	const FVector TraceEnd   = Desired - FVector(0.f, 0.f, DropHeightTrace);
+	const FVector TraceEnd = Desired - FVector(0.f, 0.f, DropHeightTrace);
 
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(DropTrace), false, P);
 	const bool bHit = GetWorld()->LineTraceSingleByChannel(
@@ -279,7 +359,8 @@ bool AInvPlayerController::Player_DropFromSlot(int32 SlotIndex, int32 Quantity, 
 	EnsurePlayerInventoryResolved();
 	if (!InventoryComponent.IsValid()) return false;
 
-	FVector Loc; FRotator Rot;
+	FVector Loc;
+	FRotator Rot;
 	GetDropTransform(Loc, Rot);
 
 	return InventoryComponent->DropFromSlot(SlotIndex, Quantity, Loc, Rot, OutChanged);
@@ -292,7 +373,8 @@ bool AInvPlayerController::Transfer_PlayerToExternal(int32 PlayerFromIndex, int3
 	if (!InventoryComponent.IsValid() || !ExternalInventory.IsValid()) return false;
 
 	// Source = player, target = external
-	return InventoryComponent->TransferTo(ExternalInventory.Get(), PlayerFromIndex, ExternalToIndex, Quantity, OutChangedPlayer, OutChangedExternal);
+	return InventoryComponent->TransferTo(ExternalInventory.Get(), PlayerFromIndex, ExternalToIndex, Quantity,
+	                                      OutChangedPlayer, OutChangedExternal);
 }
 
 bool AInvPlayerController::Transfer_ExternalToPlayer(int32 ExternalFromIndex, int32 PlayerToIndex, int32 Quantity,
@@ -313,21 +395,30 @@ bool AInvPlayerController::Transfer_ExternalToPlayer(int32 ExternalFromIndex, in
 }
 
 bool AInvPlayerController::AutoTransfer_PlayerToExternal(int32 PlayerFromIndex, int32 Quantity,
-                                                         TArray<int32>& OutChangedPlayer, TArray<int32>& OutChangedExternal)
+                                                         TArray<int32>& OutChangedPlayer,
+                                                         TArray<int32>& OutChangedExternal)
 {
 	EnsurePlayerInventoryResolved();
 	if (!InventoryComponent.IsValid() || !ExternalInventory.IsValid()) return false;
 
-	return InventoryComponent->AutoTransferTo(ExternalInventory.Get(), PlayerFromIndex, Quantity, OutChangedPlayer, OutChangedExternal);
+	return InventoryComponent->AutoTransferTo(ExternalInventory.Get(), PlayerFromIndex, Quantity, OutChangedPlayer,
+	                                          OutChangedExternal);
 }
 
 bool AInvPlayerController::AutoTransfer_ExternalToPlayer(int32 ExternalFromIndex, int32 Quantity,
-                                                         TArray<int32>& OutChangedExternal, TArray<int32>& OutChangedPlayer)
+                                                         TArray<int32>& OutChangedExternal,
+                                                         TArray<int32>& OutChangedPlayer)
 {
 	EnsurePlayerInventoryResolved();
 	if (!InventoryComponent.IsValid() || !ExternalInventory.IsValid()) return false;
 
-	return ExternalInventory->AutoTransferTo(ExternalInventory.Get(), ExternalFromIndex, Quantity, OutChangedExternal, OutChangedPlayer);
+	return ExternalInventory->AutoTransferTo(
+		InventoryComponent.Get(),
+		ExternalFromIndex,
+		Quantity,
+		OutChangedExternal,
+		OutChangedPlayer
+	);
 }
 
 bool AInvPlayerController::Player_ConsumeOne(int32 SlotIndex, TArray<int32>& OutChanged)
@@ -370,10 +461,10 @@ bool AInvPlayerController::TryPrimaryPickup(AActor* TargetActor)
 	if (!IsValid(P)) return false;
 
 	INV_PICKUP_LOG(Log, TEXT("TryPrimaryPickup: Target=%s ItemID=%s Qty=%d InRange=%d"),
-	*GetNameSafe(TargetActor),
-	*ItemComp->ItemID.ToString(),
-	ItemComp->Quantity,
-	IsWithinPickupDistance(TargetActor) ? 1 : 0);
+	               *GetNameSafe(TargetActor),
+	               *ItemComp->ItemID.ToString(),
+	               ItemComp->Quantity,
+	               IsWithinPickupDistance(TargetActor) ? 1 : 0);
 
 	if (!IsWithinPickupDistance(TargetActor))
 	{
@@ -489,9 +580,9 @@ void AInvPlayerController::TraceUnderMouseForItem()
 	const bool bIsItem = ThisActor.IsValid() && ThisActor->FindComponentByClass<UItemComponent>() != nullptr;
 
 	INV_PICKUP_LOG(Verbose, TEXT("HoverChanged: New=%s IsItem=%d Last=%s"),
-	*GetNameSafe(ThisActor.Get()),
-	bIsItem ? 1 : 0,
-	*GetNameSafe(LastActor.Get()));
+	               *GetNameSafe(ThisActor.Get()),
+	               bIsItem ? 1 : 0,
+	               *GetNameSafe(LastActor.Get()));
 }
 
 void AInvPlayerController::ClearPendingPickup()
@@ -499,10 +590,10 @@ void AInvPlayerController::ClearPendingPickup()
 	if (PendingPickupActor.IsValid() || PendingPickupItemComp.IsValid())
 	{
 		INV_PICKUP_LOG(Verbose, TEXT("ClearPendingPickup: Target=%s ItemCompOwner=%s"),
-			*GetNameSafe(PendingPickupActor.Get()),
-			*GetNameSafe(PendingPickupItemComp.IsValid() ? PendingPickupItemComp->GetOwner() : nullptr));
+		               *GetNameSafe(PendingPickupActor.Get()),
+		               *GetNameSafe(PendingPickupItemComp.IsValid() ? PendingPickupItemComp->GetOwner() : nullptr));
 	}
-	
+
 	GetWorldTimerManager().ClearTimer(PendingPickupTimerHandle);
 	PendingPickupActor = nullptr;
 	PendingPickupItemComp = nullptr;
@@ -513,9 +604,9 @@ void AInvPlayerController::StartMoveToPickup(AActor* TargetActor, UItemComponent
 	if (!IsValid(TargetActor) || !IsValid(ItemComp)) return;
 
 	INV_PICKUP_LOG(Log, TEXT("StartMoveToPickup: Target=%s ItemID=%s Qty=%d"),
-	*GetNameSafe(TargetActor),
-	*ItemComp->ItemID.ToString(),
-	ItemComp->Quantity);
+	               *GetNameSafe(TargetActor),
+	               *ItemComp->ItemID.ToString(),
+	               ItemComp->Quantity);
 
 	PendingPickupActor = TargetActor;
 	PendingPickupItemComp = ItemComp;
@@ -556,10 +647,10 @@ void AInvPlayerController::TickPendingPickup()
 
 
 	INV_PICKUP_LOG(Verbose, TEXT("TickPendingPickup: Target=%s InRange=%d ItemID=%s Qty=%d"),
-	*GetNameSafe(Target),
-	bInRange ? 1 : 0,
-	*ItemComp->ItemID.ToString(),
-	ItemComp->Quantity);
+	               *GetNameSafe(Target),
+	               bInRange ? 1 : 0,
+	               *ItemComp->ItemID.ToString(),
+	               ItemComp->Quantity);
 
 	if (IsWithinPickupDistance(Target))
 	{
@@ -733,13 +824,28 @@ void AInvPlayerController::OpenInventory()
 	{
 		if (!IsValid(PlayerInventoryWidget)) return;
 
-		PlaceWidgetInViewport(
-			PlayerInventoryWidget,
-			this,
-			FVector2D(1.f, 0.5f),
-			FVector2D(1.f, 0.5f),
-			FVector2D(-40.f, 0.f)
-		);
+		// If external is valid + in viewport -> place both
+		if (IsValid(ExternalInventoryWidget) && ExternalInventoryWidget->IsInViewport())
+		{
+			PlaceWidgetInViewport(
+				this,
+				ExternalInventoryWidget,
+				PlayerInventoryWidget,
+				/*GapPx*/ 16.f,
+				/*PaddingPx*/ FVector2D(16.f, 16.f),
+				/*bRemoveDPIScale*/ true
+			);
+		}
+		else
+		{
+			// Player-only case
+			PlaceSingleWidgetRight(
+				this,
+				PlayerInventoryWidget,
+				/*PaddingPx*/ FVector2D(16.f, 16.f),
+				/*bRemoveDPIScale*/ true
+			);
+		}
 	});
 
 	// Game + UI, but don't force focus to the widget
@@ -787,7 +893,7 @@ void AInvPlayerController::CloseInventory()
 	bShowMouseCursor = true;
 	bEnableClickEvents = true;
 	bEnableMouseOverEvents = true;
- 
+
 	// Re-apply viewport capture behavior (prevents drift after UI)
 	ApplyTopDownMouseCaptureMode();
 
@@ -816,10 +922,230 @@ void AInvPlayerController::ToggleInventory()
 	}
 }
 
+bool AInvPlayerController::CanUseExternalInventory(const UInventoryComponent* External,
+                                                   const AActor* ExternalOwner) const
+{
+	if (!IsValid(External) || !IsValid(ExternalOwner)) return false;
+
+	// Optional: forbid opening your own inventory as external
+	if (External == InventoryComponent.Get()) return false;
+
+	// Optional: distance gate (use same pattern as pickup)
+	const APawn* P = GetPawn();
+	if (!IsValid(P)) return false;
+
+	const float MaxDistSq = MaxInteractDistance * MaxInteractDistance; // add MaxInteractDistance
+	const float DistSq = FVector::DistSquared2D(P->GetActorLocation(), ExternalOwner->GetActorLocation());
+	if (DistSq > MaxDistSq) return false;
+
+	return true;
+}
+
 void AInvPlayerController::OpenExternalInventoryFromActor(AActor* ActorWithInventory)
 {
+	if (!IsLocalController()) return;
+
+	EnsurePlayerInventoryResolved();
+	if (!InventoryComponent.IsValid()) return;
+	if (!IsValid(ActorWithInventory)) return;
+
+	// Resolve external inventory component
+	UInventoryComponent* Ext = ActorWithInventory->FindComponentByClass<UInventoryComponent>();
+	if (!IsValid(Ext)) return;
+
+	// Ready checks (distance etc.)
+	if (!CanUseExternalInventory(Ext, ActorWithInventory)) return;
+
+	// Set external reference + notify UI listeners
+	SetExternalInventory(Ext);
+
+	// Ensure player inventory is open (common UX)
+	if (!bInventoryOpen)
+	{
+		OpenInventory();
+	}
+
+	// Create external widget lazily
+	if (!IsValid(ExternalInventoryWidget))
+	{
+		ExternalInventoryWidget = CreateWidget<UUserWidget>(this, ExternalInventoryWidgetClass);
+	}
+	if (!IsValid(ExternalInventoryWidget)) return;
+
+	// Bind inventory into widget
+	if (UInventoryWidgetBase* W = Cast<UInventoryWidgetBase>(ExternalInventoryWidget))
+	{
+		W->SetInventory(ExternalInventory.Get());
+	}
+
+	ExternalInventoryWidget->AddToViewport(1000);
+
+	// Place left-center next tick (matching your player inventory placement style)
+	GetWorldTimerManager().SetTimerForNextTick([this]()
+	{
+		if (!IsValid(ExternalInventoryWidget)) return;
+
+		// If player inventory is open too, place both
+		if (IsValid(PlayerInventoryWidget))
+		{
+			PlaceWidgetInViewport(
+				this,
+				ExternalInventoryWidget,
+				PlayerInventoryWidget,
+				/*GapPx*/ 16.f,
+				/*PaddingPx*/ FVector2D(16.f, 16.f),
+				/*bRemoveDPIScale*/ true
+			);
+		}
+		else
+		{
+			// If somehow external opens alone, place it left-center
+			ExternalInventoryWidget->SetAlignmentInViewport(FVector2D(0.f, 0.5f));
+			ExternalInventoryWidget->SetPositionInViewport(FVector2D(40.f, 0.f), /*bRemoveDPIScale*/ true);
+		}
+	});
+
+	// Keep the same UI input mode behavior as inventory open
+	FInputModeGameAndUI Mode;
+	Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	Mode.SetHideCursorDuringCapture(false);
+	SetInputMode(Mode);
+
+	bShowMouseCursor = true;
+	bEnableClickEvents = true;
+	bEnableMouseOverEvents = true;
+
+	// Prevent capture weirdness while UI is visible
+	if (GEngine && GEngine->GameViewport)
+	{
+		GEngine->GameViewport->SetMouseCaptureMode(EMouseCaptureMode::NoCapture);
+		GEngine->GameViewport->SetHideCursorDuringCapture(false);
+	}
 }
 
 void AInvPlayerController::CloseExternalInventory()
 {
+	if (!IsLocalController()) return;
+
+	if (IsValid(ExternalInventoryWidget))
+	{
+		ExternalInventoryWidget->RemoveFromParent();
+	}
+
+	// Unbind pointer + notify listeners
+	ClearExternalInventory();
+
+	// If your UX is “external closes but player stays open”, do nothing else.
+	// If you want closing external to also close player inventory, call CloseInventory() here.
+}
+
+bool AInvPlayerController::ExecuteInventoryAction(UInventoryComponent* Source, int32 SourceIndex,
+                                                  UInventoryComponent* Target, int32 TargetIndex, int32 Quantity,
+                                                  EInvAction Action, bool bAllowSwap, bool bFullOnly)
+{
+	// --------- Validate ----------
+	if (!IsValid(Source) || !IsValid(Target)) return false;
+	if (!Source->IsValidIndex(SourceIndex)) return false;
+
+	const FInventorySlot From = Source->GetSlot(SourceIndex);
+	if (From.IsEmpty()) return false;
+
+	const int32 Requested = (Quantity <= 0) ? From.Quantity : FMath::Min(Quantity, From.Quantity);
+	if (Requested <= 0) return false;
+
+	const FName TradedItemID = From.ItemID;
+
+	const EInventoryType SrcType = Source->InventoryType;
+	const EInventoryType DstType = Target->InventoryType;
+
+	const bool bPlayerToMerchant = (SrcType == EInventoryType::Player && DstType == EInventoryType::Merchant);
+	const bool bMerchantToPlayer = (SrcType == EInventoryType::Merchant && DstType == EInventoryType::Player);
+	const bool bIsMerchantTrade = bPlayerToMerchant || bMerchantToPlayer;
+
+	// Optional: forbid swap for merchant trades if requested
+	if (bIsMerchantTrade && !bAllowSwap)
+	{
+		// If we are going to use DragDrop -> TransferTo, validate slot policy now.
+		// For AutoTransferTo we don't target a slot, and it never swaps anyway.
+		if (Action == EInvAction::DragDrop)
+		{
+			if (!Target->IsValidIndex(TargetIndex)) return false;
+
+			const FInventorySlot To = Target->GetSlot(TargetIndex);
+			if (!To.IsEmpty() && To.ItemID != TradedItemID)
+			{
+				return false; // disallow swapping different items in merchant trade
+			}
+		}
+	}
+
+	// Optional: full-only policy (useful for "buy must fully fit")
+	if (bFullOnly)
+	{
+		if (!Target->CanFullyAdd(TradedItemID, Requested))
+		{
+			return false;
+		}
+	}
+
+	// --------- Price precheck (BEFORE move) ----------
+	int32 UnitPrice = 0;
+
+	if (bIsMerchantTrade)
+	{
+		// Base price from DB: Row.SellValue
+		if (!TryGetItemPrice(TradedItemID, UnitPrice))
+		{
+			return false; // can't price -> block trade
+		}
+
+		// For now: buy price == sell value (later: merchant coefs)
+		if (bMerchantToPlayer)
+		{
+			const int32 TotalCost = UnitPrice * Requested;
+			if (!CanAfford(TotalCost))
+			{
+				return false; // can't afford -> do not move item
+			}
+		}
+	}
+
+	// --------- Execute move ----------
+	bool bOk = false;
+	TArray<int32> ChangedS, ChangedT;
+
+	// Merchant / quick / auto => stack-first, no explicit target slot
+	const bool bUseAuto =
+		bIsMerchantTrade ||
+		Action == EInvAction::AutoMove ||
+		Action == EInvAction::QuickUse;
+
+	if (bUseAuto)
+	{
+		bOk = Source->AutoTransferTo(Target, SourceIndex, Requested, ChangedS, ChangedT);
+	}
+	else
+	{
+		if (!Target->IsValidIndex(TargetIndex)) return false;
+		bOk = Source->TransferTo(Target, SourceIndex, TargetIndex, Requested, ChangedS, ChangedT);
+	}
+
+	if (!bOk) return false;
+
+	// --------- Apply gold (AFTER move success) ----------
+	if (bIsMerchantTrade)
+	{
+		const int32 Total = UnitPrice * Requested;
+
+		if (bMerchantToPlayer)
+		{
+			AddGold(-Total); // BUY
+		}
+		else if (bPlayerToMerchant)
+		{
+			AddGold(+Total); // SELL
+		}
+	}
+
+	return true;
 }
