@@ -69,28 +69,67 @@ void UGridSlotWidget::SetSlotView(const FInventorySlotView& View)
 
 FReply UGridSlotWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
-	Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
-
-	if (InMouseEvent.GetEffectingButton() != EKeys::LeftMouseButton)
+	// 1) Middle click => context menu
+	if (InMouseEvent.GetEffectingButton() == EKeys::MiddleMouseButton)
 	{
+		// You should have OwnerMenu set in InitSlot(..., OwnerMenu)
+		if (OwnerMenu.IsValid())
+		{
+			OwnerMenu->OpenContextMenuForSlot(SlotIndex);
+			return FReply::Handled();
+		}
+
+		// Fallback if you didn’t store OwnerMenu
+		if (UInventoryWidgetBase* Menu = GetTypedOuter<UInventoryWidgetBase>())
+		{
+			Menu->OpenContextMenuForSlot(SlotIndex);
+			return FReply::Handled();
+		}
+
+		return FReply::Handled();
+	}
+
+	// 2) Only LMB does drag logic
+	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
+	{
+		if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
+		{
+			if (OwnerMenu.IsValid() && OwnerMenu->HandleClickSlotForSplit(SlotIndex))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("Slot=%d consumed by SplitMode"), SlotIndex);
+				return FReply::Handled();
+			}
+		}
+		
+		const bool bHasItem =
+			Inventory.IsValid() &&
+			SlotIndex != INDEX_NONE &&
+			!Inventory->GetSlot(SlotIndex).IsEmpty();
+
+		UE_LOG(LogTemp, Warning, TEXT("MouseDown slot=%d hasItem=%d vis=%d"),
+			SlotIndex, bHasItem ? 1 : 0, (int32)GetVisibility());
+
+		if (bHasItem)
+		{
+			return UWidgetBlueprintLibrary::DetectDragIfPressed(
+				InMouseEvent, this, EKeys::LeftMouseButton
+			).NativeReply;
+		}
+
+		// Optional: if empty slot should still “eat” the click (to stop world movement):
+		// return FReply::Handled();
+
+		if (OwnerMenu.IsValid() && OwnerMenu->HandleClickSlotForSplit(SlotIndex))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Slot=%d consumed by SplitMode"), SlotIndex);
+			return FReply::Handled();
+		}
+
 		return FReply::Unhandled();
 	}
 
-	// Live check (no cache dependency)
-	const bool bHasItem =
-		Inventory.IsValid() &&
-		SlotIndex != INDEX_NONE &&
-		!Inventory->GetSlot(SlotIndex).IsEmpty();
-
-	UE_LOG(LogTemp, Warning, TEXT("MouseDown slot=%d hasItem=%d vis=%d"),
-		SlotIndex, bHasItem ? 1 : 0, (int32)GetVisibility());
-
-	if (bHasItem)
-	{
-		return UWidgetBlueprintLibrary::DetectDragIfPressed(InMouseEvent, this, EKeys::LeftMouseButton).NativeReply;
-	}
-
-	return FReply::Unhandled();
+	// 3) Everything else: fallback to parent behavior
+	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
 }
 
 void UGridSlotWidget::NativeOnDragDetected(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent, UDragDropOperation*& OutOperation)

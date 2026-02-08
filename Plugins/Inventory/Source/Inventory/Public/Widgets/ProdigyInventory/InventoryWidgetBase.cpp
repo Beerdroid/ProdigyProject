@@ -2,13 +2,16 @@
 
 #include "Components/UniformGridPanel.h"
 #include "GridSlotWidget.h"
+#include "InvContextMenuWidget.h"
 #include "InvItemTooltipWidget.h"
+#include "InvSplitCursorWidget.h"
 #include "Blueprint/WidgetLayoutLibrary.h"
 #include "ProdigyInventory/InvDragDropOp.h"
 #include "ProdigyInventory/InventoryComponent.h"
+#include "ProdigyInventory/InvPlayerController.h"
 
 bool UInventoryWidgetBase::NativeOnDrop(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent,
-	UDragDropOperation* InOperation)
+                                        UDragDropOperation* InOperation)
 {
 	Super::NativeOnDrop(InGeometry, InDragDropEvent, InOperation);
 
@@ -38,6 +41,28 @@ void UInventoryWidgetBase::NativeDestruct()
 {
 	Unbind();
 	Super::NativeDestruct();
+}
+
+void UInventoryWidgetBase::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	if (bSplitMode)
+	{
+		UpdateSplitCursorPosition();
+	}
+}
+
+
+void UInventoryWidgetBase::UpdateSplitCursorPosition()
+{
+	if (!IsValid(SplitCursorWidget)) return;
+
+	const FVector2D Mouse = UWidgetLayoutLibrary::GetMousePositionOnViewport(GetWorld());
+	const FVector2D Offset(16.f, 16.f);
+
+	SplitCursorWidget->SetAlignmentInViewport(FVector2D(0.f, 0.f));
+	SplitCursorWidget->SetPositionInViewport(Mouse + Offset, /*bRemoveDPIScale*/ false);
 }
 
 void UInventoryWidgetBase::SetInventory(UInventoryComponent* InInventory)
@@ -80,6 +105,11 @@ void UInventoryWidgetBase::Unbind()
 
 void UInventoryWidgetBase::ShowTooltipForView(const FInventorySlotView& View)
 {
+	if (bSplitMode)
+	{
+		return;
+	}
+	
 	if (View.bEmpty || !ItemTooltipWidgetClass) return;
 
 	if (!IsValid(ItemTooltipWidget))
@@ -116,6 +146,146 @@ void UInventoryWidgetBase::HideTooltip()
 	{
 		ItemTooltipWidget->SetVisibility(ESlateVisibility::Collapsed);
 	}
+}
+
+void UInventoryWidgetBase::OpenContextMenuForSlot(int32 InSlotIndex)
+{
+	if (!ContextMenuClass) return;
+
+	CloseContextMenu();
+
+	AInvPlayerController* PC = Cast<AInvPlayerController>(GetOwningPlayer());
+	UInventoryComponent* Inv = Inventory.Get();
+	if (!IsValid(PC) || !IsValid(Inv)) return;
+
+	ContextMenu = CreateWidget<UInvContextMenuWidget>(PC, ContextMenuClass);
+	if (!IsValid(ContextMenu)) return;
+
+	ContextMenu->AddToViewport(9500);
+	ContextMenu->SetIsEnabled(true);
+	ContextMenu->SetVisibility(ESlateVisibility::Visible);
+
+	ContextMenu->Init(PC, Inv, InSlotIndex, /*bExternal*/ false, this);
+
+	// Position near mouse (no clamp, per your preference)
+	const FVector2D Mouse = UWidgetLayoutLibrary::GetMousePositionOnViewport(GetWorld());
+	ContextMenu->SetAlignmentInViewport(FVector2D(0.f, 0.f));
+	ContextMenu->SetPositionInViewport(Mouse + FVector2D(2.f, 2.f), false);
+}
+
+void UInventoryWidgetBase::CloseContextMenu()
+{
+	if (IsValid(ContextMenu))
+	{
+		ContextMenu->RemoveFromParent();
+	}
+	ContextMenu = nullptr;
+}
+
+void UInventoryWidgetBase::BeginSplitFrom(int32 FromIndex, int32 Amount)
+{
+	if (!Inventory.IsValid()) return;
+
+	const FInventorySlot S = Inventory->GetSlot(FromIndex);
+	if (S.IsEmpty() || S.Quantity <= 1) return;
+
+	HideTooltip();
+
+	bSplitMode = true;
+	SplitFromIndex = FromIndex;
+	SplitAmountPending = FMath::Clamp(Amount, 1, S.Quantity - 1);
+
+	// Create cursor widget once
+	if (!IsValid(SplitCursorWidget) && SplitCursorWidgetClass)
+	{
+		SplitCursorWidget = CreateWidget<UInvSplitCursorWidget>(GetOwningPlayer(), SplitCursorWidgetClass);
+		if (IsValid(SplitCursorWidget))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[INV_MENU] Cursor"));
+			SplitCursorWidget->AddToViewport(10000);
+			SplitCursorWidget->SetIsEnabled(false);
+			SplitCursorWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+			SplitCursorWidget->SetAlignmentInViewport(FVector2D(0.f, 0.f));
+		}
+	}
+
+	// Resolve icon (sync is fine for now; you can async later)
+	UTexture2D* IconTex = nullptr;
+	if (IsValid(SplitCursorWidget))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[INV_MENU] IconTex"));
+		FItemRow Row;
+		if (Inventory->TryGetItemDef(S.ItemID, Row))
+		{
+			IconTex = Row.Icon.LoadSynchronous();
+		}
+		SplitCursorWidget->SetPreview(IconTex, SplitAmountPending);
+		SplitCursorWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[INV_MENU] SplitMode ON From=%d Amount=%d"), SplitFromIndex, SplitAmountPending);
+}
+
+void UInventoryWidgetBase::CancelSplitMode()
+{
+	if (!bSplitMode) return;
+
+	bSplitMode = false;
+	SplitFromIndex = INDEX_NONE;
+	SplitAmountPending = 0;
+
+	if (IsValid(SplitCursorWidget))
+	{
+		SplitCursorWidget->SetVisibility(ESlateVisibility::Hidden);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[INV_MENU] SplitMode OFF"));
+}
+
+bool UInventoryWidgetBase::HandleClickSlotForSplit(int32 TargetIndex)
+{
+	if (!bSplitMode) return false;
+	if (!Inventory.IsValid()) { CancelSplitMode(); return true; }
+
+	// Only allow drop into EMPTY slot (simple UX)
+	const FInventorySlot T = Inventory->GetSlot(TargetIndex);
+	if (!T.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[INV_MENU] Split target not empty: %d"), TargetIndex);
+		return true; // consume click, keep split mode
+	}
+
+	TArray<int32> Changed;
+	const bool bOK = Inventory->SplitStack(SplitFromIndex, TargetIndex, SplitAmountPending, Changed);
+
+	UE_LOG(LogTemp, Warning, TEXT("[INV_MENU] SplitStack From=%d To=%d Amount=%d OK=%d"),
+		SplitFromIndex, TargetIndex, SplitAmountPending, bOK ? 1 : 0);
+
+	CancelSplitMode();
+	return true;
+}
+
+bool UInventoryWidgetBase::TryCompleteSplitTo(int32 ToIndex)
+{
+	if (!bSplitMode) return false;
+	bSplitMode = false;
+
+	AInvPlayerController* PC = Cast<AInvPlayerController>(GetOwningPlayer());
+	if (!IsValid(PC)) return false;
+
+	// Minimal policy: split half into empty slot
+	UInventoryComponent* Inv = Inventory.Get();
+	if (!IsValid(Inv)) return false;
+
+	const FInventorySlot S = Inv->GetSlot(SplitFromIndex);
+	if (S.IsEmpty() || S.Quantity < 2) return false;
+
+	const int32 SplitAmount = S.Quantity / 2;
+
+	TArray<int32> Changed;
+	const bool bOK = PC->Player_SplitStack(SplitFromIndex, ToIndex, SplitAmount, Changed);
+	SplitFromIndex = INDEX_NONE;
+	return bOK;
 }
 
 void UInventoryWidgetBase::RebuildAll()

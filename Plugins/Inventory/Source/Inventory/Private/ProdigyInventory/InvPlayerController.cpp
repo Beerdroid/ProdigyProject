@@ -795,6 +795,12 @@ void AInvPlayerController::CloseInventory()
 	PressStartTimeSeconds = 0.0;
 
 	bInventoryOpen = false;
+
+	if (UInventoryWidgetBase* W = Cast<UInventoryWidgetBase>(PlayerInventoryWidget))
+	{
+		W->CancelSplitMode();
+		W->CloseContextMenu();
+	}
 }
 
 void AInvPlayerController::ToggleInventory()
