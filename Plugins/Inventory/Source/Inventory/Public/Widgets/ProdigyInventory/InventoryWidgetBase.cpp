@@ -6,6 +6,7 @@
 #include "InvItemTooltipWidget.h"
 #include "InvSplitCursorWidget.h"
 #include "Blueprint/WidgetLayoutLibrary.h"
+#include "Components/TextBlock.h"
 #include "ProdigyInventory/InvDragDropOp.h"
 #include "ProdigyInventory/InventoryComponent.h"
 #include "ProdigyInventory/InvPlayerController.h"
@@ -53,7 +54,6 @@ void UInventoryWidgetBase::NativeTick(const FGeometry& MyGeometry, float InDelta
 	}
 }
 
-
 void UInventoryWidgetBase::UpdateSplitCursorPosition()
 {
 	if (!IsValid(SplitCursorWidget)) return;
@@ -81,12 +81,39 @@ void UInventoryWidgetBase::SetInventory(UInventoryComponent* InInventory)
 	Inventory->OnSlotsChanged.AddDynamic(this, &UInventoryWidgetBase::HandleSlotsChanged);
 	Inventory->OnSlotChanged.AddDynamic(this, &UInventoryWidgetBase::HandleSlotChanged);
 
+	AInvPlayerController* PC = GetOwningPlayer<AInvPlayerController>();
+	CachedPC = PC;
+
+	if (IsValid(PC))
+	{
+		// Avoid duplicate binds if SetInventory() called multiple times
+		PC->OnGoldChanged.RemoveDynamic(this, &UInventoryWidgetBase::HandleGoldChanged);
+		PC->OnGoldChanged.AddDynamic(this, &UInventoryWidgetBase::HandleGoldChanged);
+
+		// Force initial sync
+		HandleGoldChanged(PC->Gold);
+	}
+
 	RebuildAll();
 	OnInventoryBound();
 }
 
+void UInventoryWidgetBase::HandleGoldChanged(int32 NewGold)
+{
+	if (IsValid(GoldText))
+	{
+		GoldText->SetText(FText::AsNumber(NewGold));
+	}
+}
+
 void UInventoryWidgetBase::Unbind()
 {
+	if (CachedPC.IsValid())
+	{
+		CachedPC->OnGoldChanged.RemoveDynamic(this, &UInventoryWidgetBase::HandleGoldChanged);
+		CachedPC = nullptr;
+	}
+	
 	if (Inventory.IsValid())
 	{
 		Inventory->OnSlotsChanged.RemoveAll(this);

@@ -41,6 +41,7 @@ bool UInventoryComponent::GetSlotView(int32 SlotIndex, FInventorySlotView& OutVi
 		OutView.Icon        = Row.Icon;
 		OutView.Category    = Row.Category;
 		OutView.Tags        = Row.Tags;
+		OutView.Price       = Row.SellValue;
 	}
 	return true;
 }

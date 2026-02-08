@@ -6,8 +6,6 @@
 #include "ItemTypes.h"
 #include "InventoryComponent.generated.h"
 
-class UInv_ItemComponent;
-
 /** BP-friendly delegates */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnInventoryChanged);
 
@@ -159,12 +157,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Inventory|UI")
 	bool GetSlotView(int32 SlotIndex, FInventorySlotView& OutView) const;
 
+	int32 FindFirstEmptySlot() const;
+
 protected:
 	virtual void BeginPlay() override;
 
 private:
 	// Internal helpers
-	int32 FindFirstEmptySlot() const;
+
 	void FindPartialStacks(FName ItemID, TArray<int32>& OutIndices) const;
 	int32 GetMaxStack(FName ItemID) const;
 	bool IsStackable(FName ItemID) const;
