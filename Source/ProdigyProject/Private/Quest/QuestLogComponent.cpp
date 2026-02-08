@@ -13,15 +13,11 @@ class AProdigyGameState;
 UQuestLogComponent::UQuestLogComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
-	SetIsReplicatedByDefault(true);
-
-	QuestStates.Owner = this;
 }
 
 void UQuestLogComponent::BeginPlay()
 {
 	Super::BeginPlay();
-	QuestStates.Owner = this;
 
 	BindIntegration();
 
@@ -31,22 +27,6 @@ void UQuestLogComponent::BeginPlay()
 		{
 			QuestDatabase = GS->GetQuestDatabase();
 		}
-	}
-}
-
-void UQuestLogComponent::HandleQuestStatesReplicated()
-{
-	// This is the client-side reaction to replication deltas (and safe for standalone too).
-	OnQuestsUpdated.Broadcast();
-}
-
-void UQuestLogComponent::NotifyQuestStatesChanged_LocalAuthority()
-{
-	// Mirrors inventory: listen server / standalone need explicit local UI notification.
-	const ENetMode NetMode = GetNetMode();
-	if (NetMode == NM_ListenServer || NetMode == NM_Standalone)
-	{
-		HandleQuestStatesReplicated();
 	}
 }
 
@@ -150,19 +130,6 @@ IQuestRewardReceiver* UQuestLogComponent::GetRewardReceiverChecked() const
 	return RewardReceiver.GetInterface();
 }
 
-void UQuestLogComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
-{
-	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-	DOREPLIFETIME(UQuestLogComponent, QuestStates);
-}
-
-
-
-void UQuestLogComponent::OnRep_QuestStates()
-{
-	HandleQuestStatesReplicated();
-}
-
 AActor* UQuestLogComponent::GetOwnerActorChecked() const
 {
 	AActor* OwnerActor = GetOwner();
@@ -262,7 +229,6 @@ bool UQuestLogComponent::SetObjectiveProgress(FQuestRuntimeState& State, FName O
 			}
 
 			P.Progress = NewValue;
-			QuestStates.MarkItemDirty(State);
 			return true;
 		}
 	}
@@ -273,7 +239,6 @@ bool UQuestLogComponent::SetObjectiveProgress(FQuestRuntimeState& State, FName O
 	NewP.Progress = NewValue;
 
 	State.ObjectiveProgress.Add(NewP);
-	QuestStates.MarkItemDirty(State);
 	return true;
 }
 
@@ -281,7 +246,7 @@ bool UQuestLogComponent::SetObjectiveProgress(FQuestRuntimeState& State, FName O
 
 
 
-void UQuestLogComponent::ServerTrackQuest_Implementation(FName QuestID, bool bTrack)
+void UQuestLogComponent::TrackQuest(FName QuestID, bool bTrack)
 {
 	FQuestRuntimeState* State = FindQuestStateMutable(QuestID);
 	if (!State)
@@ -290,17 +255,16 @@ void UQuestLogComponent::ServerTrackQuest_Implementation(FName QuestID, bool bTr
 	}
 
 	State->bIsTracked = bTrack;
-	QuestStates.MarkItemDirty(*State);
 }
 
-void UQuestLogComponent::ServerAbandonQuest_Implementation(FName QuestID)
+void UQuestLogComponent::AbandonQuest(FName QuestID)
 {
 	for (int32 i = 0; i < QuestStates.Items.Num(); ++i)
 	{
 		if (QuestStates.Items[i].QuestID == QuestID)
 		{
 			QuestStates.Items.RemoveAt(i);
-			QuestStates.MarkArrayDirty();
+			BroadcastQuestStatesChanged();
 			return;
 		}
 	}
@@ -391,15 +355,21 @@ void UQuestLogComponent::TryCompleteQuest(FQuestRuntimeState& State, const FQues
 	}
 
 	State.bIsCompleted = true;
-	QuestStates.MarkItemDirty(State);
+
+	BroadcastQuestStatesChanged();
 
 	if (Def.bAutoComplete)
 	{
-		ServerTurnInQuest_Implementation(State.QuestID);
+		TurnInQuest(State.QuestID);
 	}
 }
 
-void UQuestLogComponent::ServerAddQuest_Implementation(FName QuestID)
+void UQuestLogComponent::BroadcastQuestStatesChanged()
+{
+	OnQuestsUpdated.Broadcast();
+}
+
+void UQuestLogComponent::AddQuest(FName QuestID)
 {
 	if (QuestID.IsNone()) return;
 
@@ -419,21 +389,17 @@ void UQuestLogComponent::ServerAddQuest_Implementation(FName QuestID)
 	NewState.bIsTurnedIn = false;
 
 	QuestStates.Items.Add(NewState);
-	QuestStates.MarkArrayDirty();
 
 	if (FQuestRuntimeState* State = FindQuestStateMutable(QuestID))
 	{
 		InitializeQuestProgress(*State, Def);
 		TryCompleteQuest(*State, Def); // important if already has items
-		QuestStates.MarkItemDirty(*State);
 	}
 
-	NotifyQuestStatesChanged_LocalAuthority();
 }
 
 void UQuestLogComponent::NotifyKillObjectiveTag(FGameplayTag TargetTag)
 {
-	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
 	if (!TargetTag.IsValid()) return;
 
 	BindIntegration();
@@ -460,7 +426,7 @@ void UQuestLogComponent::NotifyKillObjectiveTag(FGameplayTag TargetTag)
 
 	if (bAnyChanged)
 	{
-		NotifyQuestStatesChanged_LocalAuthority();
+		BroadcastQuestStatesChanged();
 	}
 }
 
@@ -508,16 +474,12 @@ void UQuestLogComponent::InitializeQuestProgress(FQuestRuntimeState& State, cons
 		State.ObjectiveProgress.Add(P);
 	}
 
-	QuestStates.MarkItemDirty(State);
-
 	// Precompute collect objectives from inventory possession
 	RecomputeCollectObjectives(State, Def);
 }
 
 void UQuestLogComponent::NotifyInventoryChanged()
 {
-	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
-
 	BindIntegration();
 
 	bool bAnyChanged = false;
@@ -542,7 +504,7 @@ void UQuestLogComponent::NotifyInventoryChanged()
 
 	if (bAnyChanged)
 	{
-		NotifyQuestStatesChanged_LocalAuthority();
+		BroadcastQuestStatesChanged();
 	}
 }
 
@@ -585,7 +547,6 @@ void UQuestLogComponent::GrantFinalRewards(const FQuestDefinition& Def)
 
 void UQuestLogComponent::NotifyInteractTargetTag(FGameplayTag TargetTag)
 {
-	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
 	if (!TargetTag.IsValid()) return;
 
 	BindIntegration();
@@ -612,13 +573,12 @@ void UQuestLogComponent::NotifyInteractTargetTag(FGameplayTag TargetTag)
 
 	if (bAnyChanged)
 	{
-		NotifyQuestStatesChanged_LocalAuthority();
+		BroadcastQuestStatesChanged();
 	}
 }
 
 void UQuestLogComponent::NotifyLocationVisitedTag(FGameplayTag TargetTag)
 {
-	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
 	if (!TargetTag.IsValid()) return;
 
 	BindIntegration();
@@ -645,14 +605,12 @@ void UQuestLogComponent::NotifyLocationVisitedTag(FGameplayTag TargetTag)
 
 	if (bAnyChanged)
 	{
-		NotifyQuestStatesChanged_LocalAuthority();
+		BroadcastQuestStatesChanged();
 	}
 }
 
-void UQuestLogComponent::ServerNotifyObjectiveEvent_Implementation(FName QuestID, FName ObjectiveID, UObject* Context)
+void UQuestLogComponent::NotifyObjectiveEvent(FName QuestID, FName ObjectiveID, UObject* Context)
 {
-	// Server only
-	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
 
 	// Validate inputs
 	if (QuestID.IsNone() || ObjectiveID.IsNone()) return;
@@ -709,7 +667,6 @@ void UQuestLogComponent::ServerNotifyObjectiveEvent_Implementation(FName QuestID
 	// Rep + UI notify (listen server / standalone path already handled in your helper)
 	if (bProgressChanged || (State->bIsCompleted != bBeforeCompleted))
 	{
-		NotifyQuestStatesChanged_LocalAuthority();
 	}
 }
 
@@ -726,7 +683,6 @@ bool UQuestLogComponent::TryGetQuestDef(FName QuestID, FQuestDefinition& OutDef)
 void UQuestLogComponent::HandleQuestItemChanged(FName ItemID)
 {
 	if (ItemID.IsNone()) return;
-	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
 
 	bool bAnyChanged = false;
 	for (FQuestRuntimeState& State : QuestStates.Items)
@@ -745,7 +701,7 @@ void UQuestLogComponent::HandleQuestItemChanged(FName ItemID)
 
 	if (bAnyChanged)
 	{
-		NotifyQuestStatesChanged_LocalAuthority();
+		BroadcastQuestStatesChanged();
 	}
 }
 
@@ -917,10 +873,8 @@ bool UQuestLogComponent::GetQuestEntryView(FName QuestID, bool& bOutIsAccepted, 
 }
 
 
-void UQuestLogComponent::ServerTurnInQuest_Implementation(FName QuestID)
+void UQuestLogComponent::TurnInQuest(FName QuestID)
 {
-	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
-
 	FQuestRuntimeState* State = FindQuestStateMutable(QuestID);
 	if (!State) return;
 	if (State->bIsTurnedIn) return;
@@ -978,8 +932,7 @@ void UQuestLogComponent::ServerTurnInQuest_Implementation(FName QuestID)
 
 	// Finalize
 	State->bIsTurnedIn = true;
-	QuestStates.MarkItemDirty(*State);
 
 	OnQuestCompleted.Broadcast(QuestID);
-	NotifyQuestStatesChanged_LocalAuthority();
+	BroadcastQuestStatesChanged();
 }

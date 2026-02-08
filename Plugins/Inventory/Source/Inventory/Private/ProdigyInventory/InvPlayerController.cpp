@@ -800,6 +800,7 @@ void AInvPlayerController::CloseInventory()
 	{
 		W->CancelSplitMode();
 		W->CloseContextMenu();
+		W->HideTooltip();
 	}
 }
 

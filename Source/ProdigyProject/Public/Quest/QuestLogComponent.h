@@ -25,19 +25,12 @@ class PRODIGYPROJECT_API UQuestLogComponent : public UActorComponent
 public:
 	UQuestLogComponent();
 
-	void HandleQuestStatesReplicated();
-
-	// -------------------- Replication --------------------
-	UPROPERTY(ReplicatedUsing=OnRep_QuestStates)
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Quest")
 	FQuestRuntimeArray QuestStates;
 
 	UFUNCTION(BlueprintCallable, Category="Quest")
 	void NotifyInventoryChanged();
 
-	UFUNCTION()
-	void OnRep_QuestStates();
-
-	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	// -------------------- Events for UI --------------------
 	UPROPERTY(BlueprintAssignable)
@@ -52,23 +45,25 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FOnQuestCompletedMessage OnQuestCompleted;
 
+	void BroadcastQuestStatesChanged();
+
 	// -------------------- Database --------------------
 	// Assign in BP (Player Character / PlayerState / etc.) or via GameState access in BeginPlay.
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Quest")
 	TObjectPtr<UQuestDatabase> QuestDatabase;
 
 	// -------------------- Public API --------------------
-	UFUNCTION(BlueprintCallable, Server, Reliable)
-	void ServerAddQuest(FName QuestID);
+	UFUNCTION(BlueprintCallable, Category="Quest")
+	void AddQuest(FName QuestID);
 
-	UFUNCTION(BlueprintCallable, Server, Reliable)
-	void ServerTurnInQuest(FName QuestID);
+	UFUNCTION(BlueprintCallable, Category="Quest")
+	void TurnInQuest(FName QuestID);
+	
+	UFUNCTION(BlueprintCallable, Category="Quest")
+	void TrackQuest(FName QuestID, bool bTrack);
 
-	UFUNCTION(Server, Reliable)
-	void ServerTrackQuest(FName QuestID, bool bTrack);
-
-	UFUNCTION(BlueprintCallable, Server, Reliable)
-	void ServerAbandonQuest(FName QuestID);
+	UFUNCTION(BlueprintCallable, Category="Quest")
+	void AbandonQuest(FName QuestID);
 
 	bool TryGetQuestDef(FName QuestID, FQuestDefinition& OutDef) const;
 
@@ -97,9 +92,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Quest|Events")
 	void NotifyLocationVisitedTag(FGameplayTag TargetTag);
 
-	UFUNCTION(BlueprintCallable, Server, Reliable)
-	void ServerNotifyObjectiveEvent(FName QuestID, FName ObjectiveID, UObject* Context);
-
+	UFUNCTION(BlueprintCallable, Category="Quest|Events")
+	void NotifyObjectiveEvent(FName QuestID, FName ObjectiveID, UObject* Context);
+	
 	UFUNCTION()
 	void HandleQuestItemChanged(FName ItemID);
 
@@ -121,7 +116,6 @@ private:
 	UPROPERTY()
 	TObjectPtr<UQuestIntegrationComponent> CachedIntegrationComponent;
 
-	void NotifyQuestStatesChanged_LocalAuthority();
 
 	void HandleKillTagNative(FGameplayTag TargetTag);
 

@@ -74,7 +74,7 @@ void AProdigyPlayerController::NotifyQuestsKillTag(FGameplayTag TargetTag)
 void AProdigyPlayerController::ApplyQuests(FName QuestID)
 {
 	UE_LOG(LogTemp, Warning, TEXT("AProdigyPlayerController ApplyQuests Owner=%s"), *QuestID.ToString());
-	QuestLog->ServerAddQuest(QuestID);
+	QuestLog->AddQuest(QuestID);
 }
 
 void AProdigyPlayerController::PrimaryInteract()

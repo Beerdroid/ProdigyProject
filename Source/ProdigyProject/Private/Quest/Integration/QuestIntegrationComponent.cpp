@@ -72,17 +72,21 @@ bool UQuestIntegrationComponent::AddItemByID_Implementation(FName ItemID, int32 
 	if (ItemID.IsNone() || Quantity <= 0) return false;
 	if (!IsValid(InventoryComp)) return false;
 
-	// Full-only reward policy
 	if (!InventoryComp->CanFullyAdd(ItemID, Quantity))
 	{
 		return false;
 	}
 
+	const int32 Before = InventoryComp->GetTotalQuantityByItemID(ItemID);
+
 	int32 Remainder = 0;
 	TArray<int32> Changed;
 	const bool bAddedAny = InventoryComp->AddItem(ItemID, Quantity, Remainder, Changed);
 
-	return bAddedAny && (Remainder == 0);
+	const int32 After = InventoryComp->GetTotalQuantityByItemID(ItemID);
+	const int32 Added = After - Before;
+
+	return bAddedAny && (Remainder == 0) && (Added == Quantity);
 }
 
 void UQuestIntegrationComponent::RemoveItemByID_Implementation(FName ItemID, int32 Quantity, UObject* Context)
@@ -101,32 +105,56 @@ void UQuestIntegrationComponent::RemoveItemByID_Implementation(FName ItemID, int
 	InventoryComp->RemoveByItemID(ItemID, Quantity, Removed, Changed);
 }
 
-void UQuestIntegrationComponent::AddCurrency_Implementation(int32 Amount)
+bool UQuestIntegrationComponent::GetItemViewByID_Implementation(FName ItemID, FInventorySlotView& OutView) const
 {
-	if (Amount <= 0)
+	OutView = FInventorySlotView();
+
+	if (ItemID.IsNone()) return false;
+
+	const UWorld* W = GetWorld();
+	if (!W) return false;
+
+	AGameStateBase* GS = W->GetGameState();
+	if (!GS) return false;
+
+	if (!GS->GetClass()->ImplementsInterface(UInventoryItemDBProvider::StaticClass()))
 	{
-		return;
+		return false;
 	}
 
-	AActor* OwnerActor = GetOwner();
-	if (!OwnerActor || !OwnerActor->HasAuthority())
+	FItemRow Row;
+	if (!IInventoryItemDBProvider::Execute_GetItemRowByID(GS, ItemID, Row))
 	{
-		return;
+		return false;
 	}
+
+	// "Definition-only" slot view
+	OutView.bEmpty    = false;
+	OutView.SlotIndex = INDEX_NONE;
+	OutView.ItemID    = ItemID;
+	OutView.Quantity  = 0; // definition-only (or 1)
+
+	OutView.DisplayName = Row.DisplayName;
+	OutView.Description = Row.Description;
+	OutView.Icon        = Row.Icon;
+	OutView.Category    = Row.Category;
+	OutView.Tags        = Row.Tags;
+
+	return true;
+}
+
+void UQuestIntegrationComponent::AddCurrency_Implementation(int32 Amount)
+{
+	if (Amount <= 0) return;
+
+	// TODO: implement your currency system
+	// e.g. if you have a PlayerState-like system even in SP, call it here.
 
 }
 
 void UQuestIntegrationComponent::AddXP_Implementation(int32 Amount)
 {
-	if (Amount <= 0)
-	{
-		return;
-	}
+	if (Amount <= 0) return;
 
-	AActor* OwnerActor = GetOwner();
-	if (!OwnerActor || !OwnerActor->HasAuthority())
-	{
-		return;
-	}
-
+	// TODO: implement XP system
 }

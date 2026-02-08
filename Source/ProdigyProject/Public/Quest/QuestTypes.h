@@ -90,7 +90,7 @@ struct FQuestObjectiveProgress
 };
 
 USTRUCT(BlueprintType)
-struct FQuestRuntimeState : public FFastArraySerializerItem
+struct FQuestRuntimeState 
 {
 	GENERATED_BODY()
 
@@ -137,30 +137,11 @@ struct FQuestLogEntryView
 	UPROPERTY(BlueprintReadOnly) int32 FinalXPReward = 0;
 };
 
-USTRUCT()
-struct FQuestRuntimeArray : public FFastArraySerializer
+USTRUCT(BlueprintType)
+struct FQuestRuntimeArray
 {
 	GENERATED_BODY()
 
 	UPROPERTY()
 	TArray<FQuestRuntimeState> Items;
-
-	UPROPERTY(NotReplicated)
-	class UQuestLogComponent* Owner = nullptr;
-
-	// --- FastArray callbacks (Inventory-style) ---
-	void PreReplicatedRemove(const TArrayView<int32> RemovedIndices, int32 FinalSize);
-	void PostReplicatedAdd(const TArrayView<int32> AddedIndices, int32 FinalSize);
-	void PostReplicatedChange(const TArrayView<int32> ChangedIndices, int32 FinalSize);
-
-	bool NetDeltaSerialize(FNetDeltaSerializeInfo& DeltaParams)
-	{
-		return FFastArraySerializer::FastArrayDeltaSerialize<FQuestRuntimeState, FQuestRuntimeArray>(Items, DeltaParams, *this);
-	}
-};
-
-template<>
-struct TStructOpsTypeTraits<FQuestRuntimeArray> : public TStructOpsTypeTraitsBase2<FQuestRuntimeArray>
-{
-	enum { WithNetDeltaSerializer = true };
 };
