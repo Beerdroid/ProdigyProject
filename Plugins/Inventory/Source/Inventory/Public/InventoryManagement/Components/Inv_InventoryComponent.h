@@ -18,6 +18,41 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FStackChange, const FInv_SlotAvailab
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FItemEquipStatusChanged, UInv_InventoryItem*, Item);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FInventoryMenuToggled, bool, bOpen);
 DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnInvDeltaNative, FName /*ItemID*/, int32 /*DeltaQty*/, UObject* /*Context*/);
+DECLARE_MULTICAST_DELEGATE(FOnInventoryChangedNative);
+
+UENUM(BlueprintType)
+enum class EInv_InventoryType : uint8
+{
+	Player,
+	Merchant,
+	Container,
+	Quest,     // optional
+	Trade,     // optional
+};
+
+
+UENUM(BlueprintType)
+enum class EInv_MoveReason : uint8
+{
+	Move,    // container ↔ player
+	Sell,    // player → merchant
+	Buy,     // merchant → player
+	Loot,    // corpse → player
+	Trade    // player ↔ player (later)
+};
+
+
+USTRUCT(BlueprintType)
+struct FInv_PredefinedItemEntry
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly)
+	FName ItemID = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta=(ClampMin="1"))
+	int32 Quantity = 1;
+};
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent), Blueprintable)
 class INVENTORY_API UInv_InventoryComponent : public UActorComponent
@@ -31,6 +66,9 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Inventory")
 	bool TryAddItemByManifest(FName ItemID, const FInv_ItemManifest& Manifest, int32 Quantity, int32& OutRemainder);
 
+	UFUNCTION(Client, Reliable)
+	void Client_EmitInvDelta(FName ItemID, int32 DeltaQty, EInv_MoveReason Reason);
+
 	UFUNCTION(Server, Reliable)
 	void Server_AddNewItemFromManifest(FName ItemID, FInv_ItemManifest Manifest, int32 StackCount);
 
@@ -39,6 +77,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Inventory")
 	void TryAddItem(UInv_ItemComponent* ItemComponent);
+
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Inventory")
+	bool AddItemByID_ServerAuth(FName ItemID, int32 Quantity, UObject* Context, int32& OutRemainder);
 
 	UFUNCTION(Server, Reliable)
 	void Server_AddNewItem(UInv_ItemComponent* ItemComponent, int32 StackCount, int32 Remainder);
@@ -68,6 +109,8 @@ public:
 	UInv_InventoryBase* GetInventoryMenu() const { return InventoryMenu; }
 	bool IsMenuOpen() const { return bInventoryMenuOpen; }
 
+	void SyncExternalInventoryToUI();
+
 	void SetItemID(FName InItemID);
 	void EmitInvDeltaByItemID(FName ItemID, int32 DeltaQty, UObject* Context);
 	FName ResolveItemIDFromManifest(const FInv_ItemManifest& Manifest) const;
@@ -80,6 +123,15 @@ public:
 	UFUNCTION(BlueprintPure, Category="Inventory|UI")
 	FInv_ItemView BuildItemViewFromManifest(const FInv_ItemManifest& Manifest) const;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Inventory")
+	EInv_InventoryType InventoryKind = EInv_InventoryType::Container;
+
+	UFUNCTION(BlueprintPure, Category="Inventory")
+	bool IsMerchantInventory() const { return InventoryKind == EInv_InventoryType::Merchant; }
+
+	UFUNCTION(BlueprintPure, Category="Inventory")
+	bool IsPlayerInventory() const { return InventoryKind == EInv_InventoryType::Player; }
+
 	FInventoryItemChange OnItemAdded;
 	FInventoryItemChange OnItemRemoved;
 	FNoRoomInInventory NoRoomInInventory;
@@ -88,16 +140,75 @@ public:
 	FItemEquipStatusChanged OnItemUnequipped;
 	FInventoryMenuToggled OnInventoryMenuToggled;
 	FOnInvDeltaNative OnInvDelta;
+	FOnInventoryChangedNative OnInventoryChanged;
 
+	UPROPERTY(Replicated)
+	bool bInitialized = false;
+
+	UPROPERTY(Replicated)
+	bool bPredefinedApplied = false;
+
+	
+	void HandleExternalInvDelta(FName ItemID, int32 DeltaQty, UObject* Context);
+	
+
+	UPROPERTY(Replicated, EditAnywhere, Category="Inventory|Predefined")
+	TArray<FInv_PredefinedItemEntry> PredefinedItems;
+
+	UFUNCTION(Server, Reliable)
+	void Server_InitializeFromPredefinedItems();
+
+	TArray<UInv_InventoryItem*> GetAllItems();
+
+	void EnsureExternalInventoryMenuCreated();
+
+	UFUNCTION(BlueprintCallable, Category="Inventory|UI")
+	void OpenExternalInventoryUI(UInv_InventoryComponent* InExternal);
+
+	UFUNCTION(BlueprintCallable, Category="Inventory|UI")
+	void CloseExternalInventoryUI();
+
+	void ApplyGameOnlyInputMode();
+
+	UFUNCTION(BlueprintCallable, Category="Inventory|Predefined")
+	void EnsurePredefinedApplied();
+
+	UFUNCTION(BlueprintCallable, Category="Inventory|UI")
+	void ReplayInventoryToUI();
+
+	UFUNCTION(BlueprintCallable, Category="Inventory|External")
+	UInv_InventoryComponent* GetExternalInventoryComp() const
+	{
+		return ExternalInventoryComp;
+	}
+
+	bool BelongsTo(const APlayerController* PC) const;
+
+	bool BelongsToOwningController() const;
+
+	bool ResolveManifestByItemID(FName ItemID, FInv_ItemManifest& OutManifest) const;
 	
 protected:
 	virtual void BeginPlay() override;
 
+	virtual void ReadyForReplication() override;
+
+	void NotifyInventoryChanged();
+	
+	void SyncInventoryToUI();
+
 private:
 
 	TWeakObjectPtr<APlayerController> OwningController;
+
+	bool TryAddItemByManifest_NoUI(FName ItemID, const FInv_ItemManifest& Manifest, int32 Quantity, int32& OutRemainder);
+
+	void ApplyGameAndUIInputMode();
 	
 	void ConstructInventory();
+	
+	UFUNCTION(Server, Reliable)
+	void Server_InitializeMerchantStock();
 
 	UPROPERTY(Replicated)
 	FInv_InventoryFastArray InventoryList;
@@ -108,7 +219,23 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Inventory")
 	TSubclassOf<UInv_InventoryBase> InventoryMenuClass;
 
+	UPROPERTY()
+	TObjectPtr<UInv_InventoryBase> ExternalInventoryMenu = nullptr;
+
+	UPROPERTY(EditAnywhere, Category="Inventory|UI")
+	TSubclassOf<UInv_InventoryBase> ExternalInventoryMenuClass;
+
+	UPROPERTY()
+	TObjectPtr<UInv_InventoryComponent> ExternalInventoryComp = nullptr;
+
+
+
+	UPROPERTY()
 	bool bInventoryMenuOpen;
+	
+	UPROPERTY()
+	bool bExternalMenuOpen;
+	
 	void OpenInventoryMenu();
 	void CloseInventoryMenu();
 

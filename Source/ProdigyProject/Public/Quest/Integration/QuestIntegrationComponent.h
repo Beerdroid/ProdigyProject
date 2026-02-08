@@ -8,9 +8,11 @@
 #include "Quest/Interfaces/QuestKillEventSource.h"
 #include "QuestIntegrationComponent.generated.h"
 
+class UInventoryComponent;
 class UInv_InventoryComponent;
 // Dynamic delegate for Blueprints/UI
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnQuestKillTagBP, FGameplayTag, TargetTag);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnQuestItemChanged, FName, ItemID);
 
 // This class is part of the plugin, but DOES NOT know about your project's inventory.
 // You subclass it in your project OR implement its Blueprint events.
@@ -28,14 +30,15 @@ public:
 
 	virtual void BeginPlay() override;
 
-	void HandleInvDelta(FName ItemID, int32 DeltaQty, UObject* Context);
+	FOnQuestItemChanged OnQuestItemChanged;
+
+	UFUNCTION()
+	void HandleItemChanged(FName ItemID);
 
 	// ---- IQuestInventoryProvider ----
 	virtual int32 GetTotalQuantityByItemID_Implementation(FName ItemID) const override;
 	virtual bool AddItemByID_Implementation(FName ItemID, int32 Quantity, UObject* Context) override;
 	virtual void RemoveItemByID_Implementation(FName ItemID, int32 Quantity,  UObject* Context) override;
-
-	virtual FOnQuestInventoryDelta& GetInventoryDeltaDelegate() override { return OnQuestInventoryDelta; }
 
 	// ---- IQuestRewardReceiver ----
 	virtual void AddCurrency_Implementation(int32 Amount) override;
@@ -43,10 +46,6 @@ public:
 
 	// ---- IQuestKillEventSource ----
 	virtual FOnQuestKillTagNative& GetKillDelegate() override { return OnQuestKillTagNative; }
-
-	// Delegates the quest system can bind to (Blueprint)
-	UPROPERTY(BlueprintAssignable, Category="Quest|Events")
-	FOnQuestInventoryDelta OnQuestInventoryDelta;
 
 	// Native delegate (C++ only). NOT a UPROPERTY.
 	FOnQuestKillTagNative OnQuestKillTagNative;
@@ -62,15 +61,9 @@ public:
 		OnQuestKillTagNative.Broadcast(TargetTag); // Quest system
 		OnQuestKillTagBP.Broadcast(TargetTag);     // Blueprint/UI
 	}
-	
-	virtual bool GetItemViewByID_Implementation(FName ItemID, FInv_ItemView& OutView) const override;
-
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category="Quest|Items")
-	bool TryGetItemManifest(FName ItemID, FInv_ItemManifest& OutManifest) const;
 
 protected:
 	UPROPERTY()
-	TObjectPtr<UInv_InventoryComponent> InventoryComp = nullptr;
+	TObjectPtr<UInventoryComponent> InventoryComp = nullptr;
 	
-	void BroadcastInventoryDelta(FName ItemID, int32 DeltaQty, UObject* Context);
 };

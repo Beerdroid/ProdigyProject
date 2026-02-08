@@ -4,10 +4,10 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
-#include "Items/Manifest/Inv_ItemManifest.h"
 #include "Types/Inv_GridTypes.h"
 #include "Inv_InventoryBase.generated.h"
 
+struct FInv_ItemManifest;
 class UInv_ItemComponent;
 class UInv_InventoryItem;
 class UInv_HoverItem;
@@ -24,6 +24,32 @@ public:
 	{
 		return FInv_SlotAvailabilityResult();
 	}
+	
+	UFUNCTION(BlueprintCallable, Category="Inventory|UI")
+	UInv_InventoryGrid* GetInventoryGrid() const { return InventoryGrid; }
+
+	UPROPERTY(meta=(BindWidgetOptional))
+	TObjectPtr<UInv_InventoryGrid> InventoryGrid = nullptr;
+	
+	UFUNCTION(BlueprintCallable, Category="Inventory")
+	virtual void SetSourceInventory(class UInv_InventoryComponent* InInventory);
+
+	UPROPERTY()
+	TObjectPtr<UInv_InventoryComponent> SourceInventory = nullptr;
+
+	bool bBoundToInventory = false;
+
+	void BindToInventory();
+	void UnbindFromInventory();
+
+	UFUNCTION(BlueprintImplementableEvent, Category="Inventory|UI")
+	void HandleItemAdded(UInv_InventoryItem* Item);
+	
+	UFUNCTION(BlueprintImplementableEvent, Category="Inventory|UI")
+	void HandleItemRemoved(UInv_InventoryItem* Item);
+
+	UFUNCTION(Category="Inventory|UI")
+	void HandleStackChanged(const FInv_SlotAvailabilityResult& Result);
 	
 	virtual void OnItemHovered(UInv_InventoryItem* Item) {}
 	virtual void OnItemUnHovered() {}

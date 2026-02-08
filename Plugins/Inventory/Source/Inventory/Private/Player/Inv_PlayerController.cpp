@@ -11,7 +11,10 @@
 #include "Widgets/HUD/Inv_HUDWidget.h"
 #include "Blueprint/AIBlueprintHelperLibrary.h"
 #include "NiagaraFunctionLibrary.h"
+#include "Items/Inv_InventoryItem.h"
+#include "Items/Fragments/Inv_FragmentTags.h"
 
+struct FInv_LabeledNumberFragment;
 DEFINE_LOG_CATEGORY_STATIC(LogInvTrace, Log, All);
 
 AInv_PlayerController::AInv_PlayerController()
@@ -27,6 +30,182 @@ void AInv_PlayerController::Tick(float DeltaTime)
 
 	// Optional alternative trace method:
 	// TraceForItem();
+}
+
+void AInv_PlayerController::Server_BuyFromMerchant_Implementation(AActor* MerchantActor, FName ItemID, int32 Quantity)
+{
+	if (!IsValid(MerchantActor) || ItemID.IsNone() || Quantity <= 0) return;
+	if (!InventoryComponent.IsValid()) return;
+
+	UInv_InventoryComponent* MerchantInv = MerchantActor->FindComponentByClass<UInv_InventoryComponent>();
+	if (!IsValid(MerchantInv)) return;
+
+	// 1) Verify merchant has stock
+	const int32 MerchantQty = MerchantInv->GetTotalQuantityByItemID(ItemID);
+	if (MerchantQty < Quantity) return;
+
+	// 2) Compute price (you need a price source — typically a fragment like SellValue/BuyValue)
+	// For now: TODO
+	const int32 TotalPrice = /*ResolveBuyPrice(ItemID)*/ 1 * Quantity;
+
+	// 3) Check player money
+	// if (!TrySpendMoney(TotalPrice)) return;
+
+	// 4) Add item to player inventory (server-side)
+	int32 Remainder = 0;
+	const bool bAdded = InventoryComponent->AddItemByID_ServerAuth(ItemID, Quantity, MerchantActor, Remainder);
+
+	const int32 ActuallyAdded = Quantity - Remainder;
+	if (!bAdded || ActuallyAdded <= 0)
+	{
+		// Refund full amount if nothing added; if partial is allowed, refund the remainder portion.
+		// AddMoney(TotalPrice);
+		return;
+	}
+
+	// 5) Remove items from merchant for amount actually added
+	MerchantInv->Server_RemoveItemByID(ItemID, ActuallyAdded, this);
+
+	// 6) Refund for remainder if partial add happened
+	if (Remainder > 0)
+	{
+		const int32 Refund = /*UnitPrice*/ 1 * Remainder;
+		// AddMoney(Refund);
+	}
+}
+
+void AInv_PlayerController::Server_MoveItem_Implementation(
+	UInv_InventoryComponent* Source,
+	UInv_InventoryComponent* Target,
+	FName ItemID,
+	int32 Quantity,
+	EInv_MoveReason Reason)
+{
+	UE_LOG(LogTemp, Warning, TEXT("[INV][Move] PC=%s Source=%s Target=%s ItemID=%s Qty=%d Reason=%d Auth=%d"),
+		*GetNameSafe(this),
+		*GetNameSafe(Source),
+		*GetNameSafe(Target),
+		*ItemID.ToString(),
+		Quantity,
+		(int32)Reason,
+		HasAuthority() ? 1 : 0);
+
+	if (!IsValid(Source) || !IsValid(Target)) return;
+	if (ItemID.IsNone() || Quantity <= 0) return;
+
+	// NOTE: BelongsTo / IsMerchantInventory not implemented yet.
+	// Keep this block if it compiles; otherwise comment it out temporarily.
+	// Always validate this is the player's inventory involved
+	if (!Source->BelongsTo(this) && !Target->BelongsTo(this))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[INV][Move] blocked: neither Source nor Target belongs to this PC"));
+		return;
+	}
+
+	// Clamp quantity
+	const int32 Available = Source->GetTotalQuantityByItemID(ItemID);
+	const int32 MoveQty = FMath::Clamp(Quantity, 1, Available);
+	if (MoveQty <= 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[INV][Move] blocked: MoveQty<=0 (Available=%d)"), Available);
+		return;
+	}
+
+	// --- POLICY ---
+	int32 PricePerItem = 0;
+
+	auto ResolveUnitPriceFromDB = [&](UInv_InventoryComponent* Context, const TCHAR* Label) -> bool
+	{
+		if (!IsValid(Context)) return false;
+
+		FInv_ItemManifest Manifest;
+		if (!Context->ResolveManifestByItemID(ItemID, Manifest))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[INV][Price] %s: ResolveManifestByItemID FAILED ItemID=%s"),
+				Label, *ItemID.ToString());
+			return false;
+		}
+
+		// Use existing "item-level" API to interpret fragments (PC never touches fragments)
+		UInv_InventoryItem* TempItem = NewObject<UInv_InventoryItem>(GetTransientPackage());
+		if (!IsValid(TempItem))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[INV][Price] %s: TempItem alloc failed"), Label);
+			return false;
+		}
+
+		TempItem->SetItemID(ItemID);
+		TempItem->SetItemManifest(Manifest);
+
+		float UnitPriceFloat = 0.f;
+		if (!TempItem->TryGetSellUnitPrice(UnitPriceFloat))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[INV][Price] %s: SellValueFragment missing ItemID=%s"),
+				Label, *ItemID.ToString());
+			return false;
+		}
+
+		// Your current money pipeline uses int32. Keep this conversion policy here.
+		PricePerItem = FMath::Max(0, FMath::RoundToInt(UnitPriceFloat));
+
+		UE_LOG(LogTemp, Warning, TEXT("[INV][Price] %s: ItemID=%s UnitPrice=%d (raw=%.2f)"),
+			Label, *ItemID.ToString(), PricePerItem, UnitPriceFloat);
+
+		return true;
+	};
+
+	if (Reason == EInv_MoveReason::Sell)
+	{
+		// later enforce: Target->IsMerchantInventory()
+		if (!Target->IsMerchantInventory())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[INV][Sell] blocked: Target is not merchant inv. Target=%s"),
+				*GetNameSafe(Target));
+			return;
+		}
+
+		ResolveUnitPriceFromDB(Source, TEXT("SELL"));
+	}
+
+	if (Reason == EInv_MoveReason::Buy)
+	{
+		// later enforce: Source->IsMerchantInventory()
+		if (!Source->IsMerchantInventory())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[INV][Buy] blocked: Source is not merchant inv. Source=%s"),
+				*GetNameSafe(Source));
+			return;
+		}
+
+		ResolveUnitPriceFromDB(Source, TEXT("BUY")); // later you may have BuyValueFragment
+	}
+
+	// --- MOVE CORE ---
+	int32 Remainder = 0;
+	Target->AddItemByID_ServerAuth(ItemID, MoveQty, this, Remainder);
+
+	const int32 Accepted = MoveQty - Remainder;
+	UE_LOG(LogTemp, Warning, TEXT("[INV][Move] AddItemByID result MoveQty=%d Remainder=%d Accepted=%d"),
+		MoveQty, Remainder, Accepted);
+
+	if (Accepted <= 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[INV][Move] blocked: nothing accepted by target"));
+		return;
+	}
+
+	Source->Server_RemoveItemByID(ItemID, Accepted, Target->GetOwner());
+
+	UE_LOG(LogTemp, Warning, TEXT("[INV][Move] Removed from source: ItemID=%s Accepted=%d"),
+		*ItemID.ToString(), Accepted);
+
+	// --- MONEY (later) ---
+	if ((Reason == EInv_MoveReason::Sell || Reason == EInv_MoveReason::Buy) && PricePerItem > 0)
+	{
+		const int32 Total = PricePerItem * Accepted;
+		UE_LOG(LogTemp, Warning, TEXT("[INV][Money] Reason=%d PricePerItem=%d Accepted=%d Total=%d (not applied yet)"),
+			(int32)Reason, PricePerItem, Accepted, Total);
+	}
 }
 
 void AInv_PlayerController::BeginPlay()
@@ -103,6 +282,53 @@ void AInv_PlayerController::ToggleInventory()
 	{
 		if (IsValid(HUDWidget)) HUDWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
 	}
+}
+
+void AInv_PlayerController::CloseExternalInventory()
+{
+	if (!InventoryComponent.IsValid()) return;
+
+	InventoryComponent->CloseExternalInventoryUI();
+
+	// HUD visibility depends ONLY on main inventory
+	if (!InventoryComponent->IsMenuOpen())
+	{
+		if (IsValid(HUDWidget))
+		{
+			HUDWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+	}
+}
+
+void AInv_PlayerController::Server_StartTrade_Implementation(AActor* MerchantActor)
+{
+	UE_LOG(LogTemp, Warning, TEXT("Server_StartTrade"));
+	if (!IsValid(MerchantActor)) return;
+
+	UInv_InventoryComponent* MerchantInv = MerchantActor->FindComponentByClass<UInv_InventoryComponent>();
+	if (!IsValid(MerchantInv)) return;
+
+	UE_LOG(LogTemp, Warning, TEXT("MerchantInv flags: bInitialized=%d Owner=%s NetMode=%d"),
+	(int32)MerchantInv->bInitialized,
+	*GetNameSafe(MerchantInv->GetOwner()),
+	(int32)(MerchantInv->GetOwner() ? MerchantInv->GetOwner()->GetNetMode() : NM_MAX)
+);
+
+	Client_OpenMerchantTrade(MerchantActor);
+	UE_LOG(LogTemp, Warning, TEXT("Server_StartTrade completed"));
+}
+
+
+void AInv_PlayerController::Client_OpenMerchantTrade_Implementation(AActor* Merchant)
+{
+	UE_LOG(LogTemp, Warning, TEXT("Client_OpenMerchantTrade completed"));
+	if (!IsValid(Merchant) || !InventoryComponent.IsValid()) return;
+
+	UInv_InventoryComponent* MerchantInv = Merchant->FindComponentByClass<UInv_InventoryComponent>();
+	if (!IsValid(MerchantInv)) return;
+
+	// This opens player inventory menu + external menu bound to merchant inv
+	InventoryComponent->OpenExternalInventoryUI(MerchantInv);
 }
 
 void AInv_PlayerController::PrimaryInteract()

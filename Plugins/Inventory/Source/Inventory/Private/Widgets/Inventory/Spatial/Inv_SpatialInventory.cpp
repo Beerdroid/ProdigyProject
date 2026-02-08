@@ -22,29 +22,69 @@
 #include "Widgets/Inventory/HoverItem/Inv_HoverItem.h"
 #include "Widgets/Inventory/SlottedItems/Inv_EquippedSlottedItem.h"
 
+static FVector2D ClampToViewport(const FVector2D& ViewportSize, const FVector2D& WidgetSize, FVector2D DesiredPos)
+{
+	DesiredPos.X = FMath::Clamp(DesiredPos.X, 0.f, FMath::Max(0.f, ViewportSize.X - WidgetSize.X));
+	DesiredPos.Y = FMath::Clamp(DesiredPos.Y, 0.f, FMath::Max(0.f, ViewportSize.Y - WidgetSize.Y));
+	return DesiredPos;
+}
+
 void UInv_SpatialInventory::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 
-	Button_Equippables->OnClicked.AddDynamic(this, &ThisClass::ShowEquippables);
-	Button_Consumables->OnClicked.AddDynamic(this, &ThisClass::ShowConsumables);
-	Button_Craftables->OnClicked.AddDynamic(this, &ThisClass::ShowCraftables);
-
-	Grid_Equippables->SetOwningCanvas(CanvasPanel);
-	Grid_Consumables->SetOwningCanvas(CanvasPanel);
-	Grid_Craftables->SetOwningCanvas(CanvasPanel);
-
-	ShowEquippables();
-
-	WidgetTree->ForEachWidget([this](UWidget* Widget)
+	// Buttons (guarded)
+	if (IsValid(Button_Equippables))
 	{
-		UInv_EquippedGridSlot* EquippedGridSlot = Cast<UInv_EquippedGridSlot>(Widget);
-		if (IsValid(EquippedGridSlot))
+		Button_Equippables->OnClicked.RemoveDynamic(this, &ThisClass::ShowEquippables);
+		Button_Equippables->OnClicked.AddDynamic(this, &ThisClass::ShowEquippables);
+	}
+
+	if (IsValid(Button_Consumables))
+	{
+		Button_Consumables->OnClicked.RemoveDynamic(this, &ThisClass::ShowConsumables);
+		Button_Consumables->OnClicked.AddDynamic(this, &ThisClass::ShowConsumables);
+	}
+
+	if (IsValid(Button_Craftables))
+	{
+		Button_Craftables->OnClicked.RemoveDynamic(this, &ThisClass::ShowCraftables);
+		Button_Craftables->OnClicked.AddDynamic(this, &ThisClass::ShowCraftables);
+	}
+
+	// No more canvas dependency:
+	// Grid_Equippables->SetOwningCanvas(CanvasPanel);
+	// Grid_Consumables->SetOwningCanvas(CanvasPanel);
+	// Grid_Craftables->SetOwningCanvas(CanvasPanel);
+
+	// Default tab
+	if (IsValid(Grid_Equippables) && IsValid(Switcher) && IsValid(Button_Equippables))
+	{
+		ShowEquippables();
+	}
+	else
+	{
+		// Fallback: try any grid that exists
+		if (IsValid(Grid_Consumables) && IsValid(Button_Consumables)) ShowConsumables();
+		else if (IsValid(Grid_Craftables) && IsValid(Button_Craftables)) ShowCraftables();
+	}
+
+	// Cache equipped slots + bind click
+	EquippedGridSlots.Reset();
+
+	if (IsValid(WidgetTree))
+	{
+		WidgetTree->ForEachWidget([this](UWidget* Widget)
 		{
-			EquippedGridSlots.Add(EquippedGridSlot);
-			EquippedGridSlot->EquippedGridSlotClicked.AddDynamic(this, &ThisClass::EquippedGridSlotClicked);
-		}
-	});
+			if (UInv_EquippedGridSlot* EquippedGridSlot = Cast<UInv_EquippedGridSlot>(Widget))
+			{
+				EquippedGridSlots.Add(EquippedGridSlot);
+
+				EquippedGridSlot->EquippedGridSlotClicked.RemoveDynamic(this, &ThisClass::EquippedGridSlotClicked);
+				EquippedGridSlot->EquippedGridSlotClicked.AddDynamic(this, &ThisClass::EquippedGridSlotClicked);
+			}
+		});
+	}
 }
 
 void UInv_SpatialInventory::EquippedGridSlotClicked(UInv_EquippedGridSlot* EquippedGridSlot, const FGameplayTag& EquipmentTypeTag)
@@ -116,43 +156,58 @@ void UInv_SpatialInventory::NativeTick(const FGeometry& MyGeometry, float InDelt
 	Super::NativeTick(MyGeometry, InDeltaTime);
 
 	if (!IsValid(ItemDescription)) return;
-	SetItemDescriptionSizeAndPosition(ItemDescription, CanvasPanel);
-	SetEquippedItemDescriptionSizeAndPosition(ItemDescription, EquippedItemDescription, CanvasPanel);
+
+	if (ItemDescription->IsVisible())
+	{
+		SetItemDescriptionSizeAndPosition(ItemDescription);
+	}
+
+	if (IsValid(EquippedItemDescription) && EquippedItemDescription->IsVisible())
+	{
+		SetEquippedItemDescriptionSizeAndPosition(ItemDescription, EquippedItemDescription);
+	}
 }
 
-void UInv_SpatialInventory::SetItemDescriptionSizeAndPosition(UInv_ItemDescription* Description, UCanvasPanel* Canvas) const
+void UInv_SpatialInventory::SetItemDescriptionSizeAndPosition(UInv_ItemDescription* Description) const
 {
-	UCanvasPanelSlot* ItemDescriptionCPS = UWidgetLayoutLibrary::SlotAsCanvasSlot(Description);
-	if (!IsValid(ItemDescriptionCPS)) return;
+	if (!IsValid(Description)) return;
 
-	const FVector2D ItemDescriptionSize = Description->GetBoxSize();
-	ItemDescriptionCPS->SetSize(ItemDescriptionSize);
+	// Size
+	const FVector2D WidgetSize = Description->GetBoxSize();
+	Description->SetDesiredSizeInViewport(WidgetSize);
 
-	FVector2D ClampedPosition = UInv_WidgetUtils::GetClampedWidgetPosition(
-		UInv_WidgetUtils::GetWidgetSize(Canvas),
-		ItemDescriptionSize,
-		UWidgetLayoutLibrary::GetMousePositionOnViewport(GetOwningPlayer()));
+	// Viewport clamp
+	const FVector2D ViewportSize = UWidgetLayoutLibrary::GetViewportSize(GetOwningPlayer());
 
-	ItemDescriptionCPS->SetPosition(ClampedPosition);
+	// Mouse position in viewport space
+	const FVector2D MousePos = UWidgetLayoutLibrary::GetMousePositionOnViewport(GetOwningPlayer());
+
+	FVector2D Pos = ClampToViewport(ViewportSize, WidgetSize, MousePos);
+	Description->SetPositionInViewport(Pos, false);
 }
 
-void UInv_SpatialInventory::SetEquippedItemDescriptionSizeAndPosition(UInv_ItemDescription* Description, UInv_ItemDescription* EquippedDescription, UCanvasPanel* Canvas) const
+void UInv_SpatialInventory::SetEquippedItemDescriptionSizeAndPosition(UInv_ItemDescription* Description, UInv_ItemDescription* EquippedDescription) const
 {
-	UCanvasPanelSlot* ItemDescriptionCPS = UWidgetLayoutLibrary::SlotAsCanvasSlot(Description);
-	UCanvasPanelSlot* EquippedItemDescriptionCPS = UWidgetLayoutLibrary::SlotAsCanvasSlot(EquippedDescription);
-	if (!IsValid(ItemDescriptionCPS) || !IsValid(EquippedItemDescriptionCPS)) return;
+	if (!IsValid(Description) || !IsValid(EquippedDescription)) return;
 
-	const FVector2D ItemDescriptionSize = Description->GetBoxSize();
-	const FVector2D EquippedItemDescriptionSize = EquippedDescription->GetBoxSize();
+	const FVector2D MainSize = Description->GetBoxSize();
+	const FVector2D EquippedSize = EquippedDescription->GetBoxSize();
 
-	FVector2D ClampedPosition = UInv_WidgetUtils::GetClampedWidgetPosition(
-		UInv_WidgetUtils::GetWidgetSize(Canvas),
-		ItemDescriptionSize,
-		UWidgetLayoutLibrary::GetMousePositionOnViewport(GetOwningPlayer()));
-	ClampedPosition.X -= EquippedItemDescriptionSize.X;
+	EquippedDescription->SetDesiredSizeInViewport(EquippedSize);
 
-	EquippedItemDescriptionCPS->SetSize(EquippedItemDescriptionSize);
-	EquippedItemDescriptionCPS->SetPosition(ClampedPosition);
+	const FVector2D ViewportSize = UWidgetLayoutLibrary::GetViewportSize(GetOwningPlayer());
+	const FVector2D MousePos = UWidgetLayoutLibrary::GetMousePositionOnViewport(GetOwningPlayer());
+
+	// Place the main tooltip clamped first
+	FVector2D MainPos = ClampToViewport(ViewportSize, MainSize, MousePos);
+
+	// Place equipped tooltip to the LEFT of main tooltip
+	FVector2D EquippedPos = MainPos;
+	EquippedPos.X -= EquippedSize.X;
+
+	EquippedPos = ClampToViewport(ViewportSize, EquippedSize, EquippedPos);
+
+	EquippedDescription->SetPositionInViewport(EquippedPos, false);
 }
 
 bool UInv_SpatialInventory::CanEquipHoverItem(UInv_EquippedGridSlot* EquippedGridSlot, const FGameplayTag& EquipmentTypeTag) const
@@ -320,6 +375,23 @@ float UInv_SpatialInventory::GetTileSize() const
 	return Grid_Equippables->GetTileSize();
 }
 
+void UInv_SpatialInventory::SetSourceInventory(UInv_InventoryComponent* InComp)
+{
+	UE_LOG(LogTemp, Warning, TEXT("SetSourceInventory start"));
+	Super::SetSourceInventory(InComp);
+
+	if (!IsValid(SourceInventory)) return;
+
+	if (IsValid(Grid_Equippables))  Grid_Equippables->SetInventoryComponent(SourceInventory);
+	if (IsValid(Grid_Consumables))  Grid_Consumables->SetInventoryComponent(SourceInventory);
+	if (IsValid(Grid_Craftables))   Grid_Craftables->SetInventoryComponent(SourceInventory);
+
+	// Optional: ensure ActiveGrid points at the currently visible grid
+	// ActiveGrid = Grid_Equippables; (or whatever Switcher index is)
+	UE_LOG(LogTemp, Warning, TEXT("SetSourceInventory end"));
+	
+}
+
 void UInv_SpatialInventory::ShowEquippedItemDescription(UInv_InventoryItem* Item)
 {
 	const auto& Manifest = Item->GetItemManifest();
@@ -361,7 +433,14 @@ UInv_ItemDescription* UInv_SpatialInventory::GetItemDescription()
 	if (!IsValid(ItemDescription))
 	{
 		ItemDescription = CreateWidget<UInv_ItemDescription>(GetOwningPlayer(), ItemDescriptionClass);
-		CanvasPanel->AddChild(ItemDescription);
+		if (!IsValid(ItemDescription)) return nullptr;
+
+		// High Z so it draws above both inventories
+		ItemDescription->AddToViewport(999);
+
+		// Make sure tooltip never blocks clicks
+		ItemDescription->SetVisibility(ESlateVisibility::Collapsed);
+		ItemDescription->SetIsEnabled(false); // optional (visibility is the main thing)
 	}
 	return ItemDescription;
 }
@@ -371,7 +450,11 @@ UInv_ItemDescription* UInv_SpatialInventory::GetEquippedItemDescription()
 	if (!IsValid(EquippedItemDescription))
 	{
 		EquippedItemDescription = CreateWidget<UInv_ItemDescription>(GetOwningPlayer(), EquippedItemDescriptionClass);
-		CanvasPanel->AddChild(EquippedItemDescription);
+		if (!IsValid(EquippedItemDescription)) return nullptr;
+
+		EquippedItemDescription->AddToViewport(998); // just under main if you want
+		EquippedItemDescription->SetVisibility(ESlateVisibility::Collapsed);
+		EquippedItemDescription->SetIsEnabled(false);
 	}
 	return EquippedItemDescription;
 }

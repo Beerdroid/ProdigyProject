@@ -8,6 +8,13 @@
 
 #include "Inv_InventoryGrid.generated.h"
 
+UENUM(BlueprintType)
+enum class EInv_GridUIMode : uint8
+{
+	PlayerInventory,
+	ExternalInventory,   // merchant / chest / etc.
+};
+
 class UInv_ItemPopUp;
 class UInv_HoverItem;
 struct FInv_ImageFragment;
@@ -37,6 +44,24 @@ public:
 	FInv_SlotAvailabilityResult HasRoomForItem(FName ItemID, const UInv_InventoryItem* Item, int32 StackAmountOverride = -1);
 	FInv_SlotAvailabilityResult HasRoomForItem(const UInv_ItemComponent* ItemComponent);
 	FInv_SlotAvailabilityResult HasRoomForItem(const UInv_InventoryItem* Item, int32 StackAmountOverride = -1);
+
+	UFUNCTION(BlueprintCallable, Category="Inventory")
+	void SetInventoryComponent(UInv_InventoryComponent* InComp);
+
+	UPROPERTY()
+	bool bPlayerOwnedInventory = true;
+
+	void BindToInventory(UInv_InventoryComponent* InComp);
+	void UnbindFromInventory();
+
+	void RebuildFromSnapshot();
+
+	UPROPERTY(EditAnywhere, Category="Inventory")
+	bool bAutoBindToOwningPlayerInventory = true;
+
+	bool bGridBuilt = false;
+	bool bSnapshotApplied = false;
+	bool bIsPlayerOwnedInventory = false;
 	
 	void ShowCursor();
 	void HideCursor();
@@ -52,7 +77,11 @@ public:
 	UFUNCTION()
 	void AddItem(UInv_InventoryItem* Item);
 
+	UPROPERTY(BlueprintReadOnly, Category="Inventory|UI")
+	bool bAllowContextMenu = true;
 
+	UPROPERTY(BlueprintReadOnly, Category="Inventory|UI")
+	EInv_GridUIMode UIMode = EInv_GridUIMode::PlayerInventory;
 private:
 
 	TWeakObjectPtr<UInv_InventoryComponent> InventoryComponent;
@@ -101,6 +130,7 @@ private:
 	int32 GetStackAmount(const UInv_GridSlot* GridSlot) const;
 	bool IsRightClick(const FPointerEvent& MouseEvent) const;
 	bool IsLeftClick(const FPointerEvent& MouseEvent) const;
+	bool IsMiddleClick(const FPointerEvent& MouseEvent) const;
 	void PickUp(UInv_InventoryItem* ClickedInventoryItem, const int32 GridIndex);
 	void AssignHoverItem(UInv_InventoryItem* InventoryItem, const int32 GridIndex, const int32 PreviousGridIndex);
 	void RemoveItemFromGrid(UInv_InventoryItem* InventoryItem, const int32 GridIndex);

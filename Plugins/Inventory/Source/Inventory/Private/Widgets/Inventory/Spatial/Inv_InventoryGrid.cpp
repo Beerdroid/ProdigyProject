@@ -16,22 +16,130 @@
 #include "Widgets/Inventory/GridSlots/Inv_GridSlot.h"
 #include "Widgets/Utils/Inv_WidgetUtils.h"
 #include "Items/Manifest/Inv_ItemManifest.h"
+#include "Player/Inv_PlayerController.h"
 #include "Widgets/Inventory/HoverItem/Inv_HoverItem.h"
 #include "Widgets/Inventory/SlottedItems/Inv_SlottedItem.h"
 #include "Widgets/ItemPopUp/Inv_ItemPopUp.h"
 
+static bool IsPlayerInventoryForThisWidget(const UUserWidget* Widget, const UInv_InventoryComponent* IC)
+{
+	if (!IsValid(Widget) || !IsValid(IC)) return false;
+
+	APlayerController* PC = Widget->GetOwningPlayer();
+	if (!IsValid(PC)) return false;
+
+	AActor* Owner = IC->GetOwner();
+	if (!IsValid(Owner)) return false;
+
+	return (Owner == PC) || (Owner == PC->GetPawn());
+}
+
 void UInv_InventoryGrid::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
-
 	ConstructGrid();
 
+	// If someone already set InventoryComponent (external), use it.
+	if (InventoryComponent.IsValid())
+	{
+		bPlayerOwnedInventory = IsPlayerInventoryForThisWidget(this, InventoryComponent.Get()); // ✅
+		BindToInventory(InventoryComponent.Get());
+		RebuildFromSnapshot();
+		return;
+	}
+
 	InventoryComponent = UInv_InventoryStatics::GetInventoryComponent(GetOwningPlayer());
-	InventoryComponent->OnItemAdded.AddDynamic(this, &ThisClass::AddItem);
-	InventoryComponent->OnStackChange.AddDynamic(this, &ThisClass::AddStacks);
-	InventoryComponent->OnInventoryMenuToggled.AddDynamic(this, &ThisClass::OnInventoryMenuToggled);
-	InventoryComponent->OnItemRemoved.AddDynamic(this, &ThisClass::HandleItemRemoved);
-	InventoryComponent->OnInvDelta.AddUObject(this, &ThisClass::HandleInvDelta);
+	if (!InventoryComponent.IsValid()) return;
+
+	bPlayerOwnedInventory = true; // ✅ since you explicitly grabbed the player's IC
+	BindToInventory(InventoryComponent.Get());
+	RebuildFromSnapshot();
+}
+
+void UInv_InventoryGrid::SetInventoryComponent(UInv_InventoryComponent* InComp)
+{
+	if (InventoryComponent.Get() == InComp) return;
+
+	UnbindFromInventory();
+
+	InventoryComponent = InComp;
+	if (!InventoryComponent.IsValid()) return;
+
+	bPlayerOwnedInventory = IsPlayerInventoryForThisWidget(this, InventoryComponent.Get());
+
+	BindToInventory(InventoryComponent.Get());
+	RebuildFromSnapshot();
+}
+
+
+void UInv_InventoryGrid::BindToInventory(UInv_InventoryComponent* InComp)
+{
+	if (!IsValid(InComp)) return;
+
+	// always remove first to avoid duplicate binds
+	InComp->OnItemAdded.RemoveDynamic(this, &ThisClass::AddItem);
+	InComp->OnItemAdded.AddDynamic(this, &ThisClass::AddItem);
+
+	InComp->OnStackChange.RemoveDynamic(this, &ThisClass::AddStacks);
+	InComp->OnStackChange.AddDynamic(this, &ThisClass::AddStacks);
+
+	InComp->OnInventoryMenuToggled.RemoveDynamic(this, &ThisClass::OnInventoryMenuToggled);
+	InComp->OnInventoryMenuToggled.AddDynamic(this, &ThisClass::OnInventoryMenuToggled);
+
+	InComp->OnItemRemoved.RemoveDynamic(this, &ThisClass::HandleItemRemoved);
+	InComp->OnItemRemoved.AddDynamic(this, &ThisClass::HandleItemRemoved);
+
+	InComp->OnInvDelta.RemoveAll(this);
+	InComp->OnInvDelta.AddUObject(this, &ThisClass::HandleInvDelta);
+}
+
+void UInv_InventoryGrid::UnbindFromInventory()
+{
+	if (!InventoryComponent.IsValid()) return;
+
+	InventoryComponent->OnItemAdded.RemoveDynamic(this, &ThisClass::AddItem);
+	InventoryComponent->OnStackChange.RemoveDynamic(this, &ThisClass::AddStacks);
+	InventoryComponent->OnInventoryMenuToggled.RemoveDynamic(this, &ThisClass::OnInventoryMenuToggled);
+	InventoryComponent->OnItemRemoved.RemoveDynamic(this, &ThisClass::HandleItemRemoved);
+	InventoryComponent->OnInvDelta.RemoveAll(this);
+}
+
+void UInv_InventoryGrid::RebuildFromSnapshot()
+{
+	if (!bGridBuilt || !InventoryComponent.IsValid())
+		return;
+
+	// Clear only visuals we own (slotted widgets), keep GridSlots array
+	for (auto& KVP : SlottedItems)
+	{
+		if (IsValid(KVP.Value))
+		{
+			KVP.Value->RemoveFromParent();
+		}
+	}
+	SlottedItems.Empty();
+
+	// Reset slot state (NO popup touching here)
+	for (UInv_GridSlot* GridSlot : GridSlots)
+	{
+		if (!IsValid(GridSlot)) continue;
+
+		GridSlot->SetInventoryItem(nullptr);
+		GridSlot->SetUpperLeftIndex(INDEX_NONE);
+		GridSlot->SetAvailable(true);
+		GridSlot->SetStackCount(0);
+		GridSlot->SetUnoccupiedTexture();
+	}
+
+	// Now rebuild from the inventory's current state
+	const TArray<UInv_InventoryItem*> Items = InventoryComponent->GetAllItems(); // or whatever you have
+	for (UInv_InventoryItem* Item : Items)
+	{
+		if (!IsValid(Item)) continue;
+		AddItem(Item);
+	}
+
+	bSnapshotApplied = true;
 }
 
 void UInv_InventoryGrid::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
@@ -54,7 +162,8 @@ FInv_SlotAvailabilityResult UInv_InventoryGrid::HasRoomForItem(FName ItemID, con
 	return HasRoomForItem(ItemID, ItemComponent->GetItemManifest());
 }
 
-FInv_SlotAvailabilityResult UInv_InventoryGrid::HasRoomForItem(FName ItemID, const FInv_ItemManifest& Manifest, const int32 StackAmountOverride)
+FInv_SlotAvailabilityResult UInv_InventoryGrid::HasRoomForItem(FName ItemID, const FInv_ItemManifest& Manifest,
+                                                               const int32 StackAmountOverride)
 {
 	FInv_SlotAvailabilityResult Result;
 
@@ -62,7 +171,7 @@ FInv_SlotAvailabilityResult UInv_InventoryGrid::HasRoomForItem(FName ItemID, con
 	Result.bStackable = StackableFragment != nullptr;
 
 	const int32 MaxStackSize = StackableFragment ? StackableFragment->GetMaxStackSize() : 1;
-	int32 AmountToFill       = StackableFragment ? StackableFragment->GetStackCount() : 1;
+	int32 AmountToFill = StackableFragment ? StackableFragment->GetStackCount() : 1;
 
 	if (StackAmountOverride != -1 && Result.bStackable)
 	{
@@ -79,12 +188,14 @@ FInv_SlotAvailabilityResult UInv_InventoryGrid::HasRoomForItem(FName ItemID, con
 
 		TSet<int32> TentativelyClaimed;
 
-		if (!HasRoomAtIndex(GridSlot, GetItemDimensions(Manifest), CheckedIndices, TentativelyClaimed, ItemID, MaxStackSize))
+		if (!HasRoomAtIndex(GridSlot, GetItemDimensions(Manifest), CheckedIndices, TentativelyClaimed, ItemID,
+		                    MaxStackSize))
 		{
 			continue;
 		}
 
-		const int32 AmountToFillInSlot = DetermineFillAmountForSlot(Result.bStackable, MaxStackSize, AmountToFill, GridSlot);
+		const int32 AmountToFillInSlot = DetermineFillAmountForSlot(Result.bStackable, MaxStackSize, AmountToFill,
+		                                                            GridSlot);
 		if (AmountToFillInSlot == 0) continue;
 
 		CheckedIndices.Append(TentativelyClaimed);
@@ -106,7 +217,8 @@ FInv_SlotAvailabilityResult UInv_InventoryGrid::HasRoomForItem(FName ItemID, con
 }
 
 
-FInv_SlotAvailabilityResult UInv_InventoryGrid::HasRoomForItem(FName ItemID, const UInv_InventoryItem* Item, const int32 StackAmountOverride)
+FInv_SlotAvailabilityResult UInv_InventoryGrid::HasRoomForItem(FName ItemID, const UInv_InventoryItem* Item,
+                                                               const int32 StackAmountOverride)
 {
 	return HasRoomForItem(ItemID, Item->GetItemManifest(), StackAmountOverride);
 }
@@ -124,7 +236,7 @@ FInv_SlotAvailabilityResult UInv_InventoryGrid::HasRoomForItem(const UInv_ItemCo
 }
 
 FInv_SlotAvailabilityResult UInv_InventoryGrid::HasRoomForItem(const UInv_InventoryItem* Item,
-	int32 StackAmountOverride)
+                                                               int32 StackAmountOverride)
 {
 	FInv_SlotAvailabilityResult Result;
 	if (!IsValid(Item))
@@ -139,15 +251,15 @@ FInv_SlotAvailabilityResult UInv_InventoryGrid::HasRoomForItem(const UInv_Invent
 void UInv_InventoryGrid::UpdateTileParameters(const FVector2D& CanvasPosition, const FVector2D& MousePosition)
 {
 	if (!bMouseWithinCanvas) return;
-	
+
 	// Calculate the tile quadrant, tile index, and coordinates
 	const FIntPoint HoveredTileCoordinates = CalculateHoveredCoordinates(CanvasPosition, MousePosition);
-	
+
 	LastTileParameters = TileParameters;
 	TileParameters.TileCoordinats = HoveredTileCoordinates;
 	TileParameters.TileIndex = UInv_WidgetUtils::GetIndexFromPosition(HoveredTileCoordinates, Columns);
 	TileParameters.TileQuadrant = CalculateTileQuadrant(CanvasPosition, MousePosition);
-	
+
 	OnTileParametersUpdated(TileParameters);
 }
 
@@ -239,11 +351,12 @@ void UInv_InventoryGrid::OnTileParametersUpdated(const FInv_TileParameters& Para
 
 	// Get Hover Item's dimensions
 	const FIntPoint Dimensions = HoverItem->GetGridDimensions();
-	
+
 	// calculate the starting coordinate for highlighting
-	const FIntPoint StartingCoordinate = CalculateStartingCoordinate(Parameters.TileCoordinats, Dimensions, Parameters.TileQuadrant);
+	const FIntPoint StartingCoordinate = CalculateStartingCoordinate(Parameters.TileCoordinats, Dimensions,
+	                                                                 Parameters.TileQuadrant);
 	ItemDropIndex = UInv_WidgetUtils::GetIndexFromPosition(StartingCoordinate, Columns);
-	
+
 	CurrentQueryResult = CheckHoverPosition(StartingCoordinate, Dimensions);
 
 	if (CurrentQueryResult.bHasSpace)
@@ -255,7 +368,8 @@ void UInv_InventoryGrid::OnTileParametersUpdated(const FInv_TileParameters& Para
 
 	if (CurrentQueryResult.ValidItem.IsValid() && GridSlots.IsValidIndex(CurrentQueryResult.UpperLeftIndex))
 	{
-		const FInv_GridFragment* GridFragment = GetFragment<FInv_GridFragment>(CurrentQueryResult.ValidItem.Get(), FragmentTags::GridFragment);
+		const FInv_GridFragment* GridFragment = GetFragment<FInv_GridFragment>(
+			CurrentQueryResult.ValidItem.Get(), FragmentTags::GridFragment);
 		if (!GridFragment) return;
 
 		ChangeHoverType(CurrentQueryResult.UpperLeftIndex, GridFragment->GetGridSize(), EInv_GridSlotState::GrayedOut);
@@ -265,23 +379,24 @@ void UInv_InventoryGrid::OnTileParametersUpdated(const FInv_TileParameters& Para
 FInv_SpaceQueryResult UInv_InventoryGrid::CheckHoverPosition(const FIntPoint& Position, const FIntPoint& Dimensions)
 {
 	FInv_SpaceQueryResult Result;
-	
+
 	// in the grid bounds?
 	if (!IsInGridBounds(UInv_WidgetUtils::GetIndexFromPosition(Position, Columns), Dimensions)) return Result;
 
 	Result.bHasSpace = true;
-	
+
 	// If more than one of the indices is occupied with the same item, we need to see if they all have the same upper left index.
 	TSet<int32> OccupiedUpperLeftIndices;
-	UInv_InventoryStatics::ForEach2D(GridSlots, UInv_WidgetUtils::GetIndexFromPosition(Position, Columns), Dimensions, Columns, [&](const UInv_GridSlot* GridSlot)
-	{
-		if (GridSlot->GetInventoryItem().IsValid())
-		{
-			OccupiedUpperLeftIndices.Add(GridSlot->GetUpperLeftIndex());
-			Result.bHasSpace = false;
-		}
-	});
-	
+	UInv_InventoryStatics::ForEach2D(GridSlots, UInv_WidgetUtils::GetIndexFromPosition(Position, Columns), Dimensions,
+	                                 Columns, [&](const UInv_GridSlot* GridSlot)
+	                                 {
+		                                 if (GridSlot->GetInventoryItem().IsValid())
+		                                 {
+			                                 OccupiedUpperLeftIndices.Add(GridSlot->GetUpperLeftIndex());
+			                                 Result.bHasSpace = false;
+		                                 }
+	                                 });
+
 	// if so, is there only one item in the way? (can we swap?)
 	if (OccupiedUpperLeftIndices.Num() == 1) // single item at position - it's valid for swapping/combining
 	{
@@ -293,7 +408,8 @@ FInv_SpaceQueryResult UInv_InventoryGrid::CheckHoverPosition(const FIntPoint& Po
 	return Result;
 }
 
-bool UInv_InventoryGrid::CursorExitedCanvas(const FVector2D& BoundaryPos, const FVector2D& BoundarySize, const FVector2D& Location)
+bool UInv_InventoryGrid::CursorExitedCanvas(const FVector2D& BoundaryPos, const FVector2D& BoundarySize,
+                                            const FVector2D& Location)
 {
 	bLastMouseWithinCanvas = bMouseWithinCanvas;
 	bMouseWithinCanvas = UInv_WidgetUtils::IsWithinBounds(BoundaryPos, BoundarySize, Location);
@@ -332,33 +448,36 @@ void UInv_InventoryGrid::UnHighlightSlots(const int32 Index, const FIntPoint& Di
 	});
 }
 
-void UInv_InventoryGrid::ChangeHoverType(const int32 Index, const FIntPoint& Dimensions, EInv_GridSlotState GridSlotState)
+void UInv_InventoryGrid::ChangeHoverType(const int32 Index, const FIntPoint& Dimensions,
+                                         EInv_GridSlotState GridSlotState)
 {
 	UnHighlightSlots(LastHighlightedIndex, LastHighlightedDimensions);
-	UInv_InventoryStatics::ForEach2D(GridSlots, Index, Dimensions, Columns, [State = GridSlotState](UInv_GridSlot* GridSlot)
-	{
-		switch (State)
-		{
-		case EInv_GridSlotState::Occupied:
-			GridSlot->SetOccupiedTexture();
-			break;
-		case EInv_GridSlotState::Unoccupied:
-			GridSlot->SetUnoccupiedTexture();
-			break;
-		case EInv_GridSlotState::GrayedOut:
-			GridSlot->SetGrayedOutTexture();
-			break;
-		case EInv_GridSlotState::Selected:
-			GridSlot->SetSelectedTexture();
-			break;
-		}
-	});
+	UInv_InventoryStatics::ForEach2D(GridSlots, Index, Dimensions, Columns,
+	                                 [State = GridSlotState](UInv_GridSlot* GridSlot)
+	                                 {
+		                                 switch (State)
+		                                 {
+		                                 case EInv_GridSlotState::Occupied:
+			                                 GridSlot->SetOccupiedTexture();
+			                                 break;
+		                                 case EInv_GridSlotState::Unoccupied:
+			                                 GridSlot->SetUnoccupiedTexture();
+			                                 break;
+		                                 case EInv_GridSlotState::GrayedOut:
+			                                 GridSlot->SetGrayedOutTexture();
+			                                 break;
+		                                 case EInv_GridSlotState::Selected:
+			                                 GridSlot->SetSelectedTexture();
+			                                 break;
+		                                 }
+	                                 });
 
 	LastHighlightedIndex = Index;
 	LastHighlightedDimensions = Dimensions;
 }
 
-FIntPoint UInv_InventoryGrid::CalculateStartingCoordinate(const FIntPoint& Coordinate, const FIntPoint& Dimensions, const EInv_TileQuadrant Quadrant) const
+FIntPoint UInv_InventoryGrid::CalculateStartingCoordinate(const FIntPoint& Coordinate, const FIntPoint& Dimensions,
+                                                          const EInv_TileQuadrant Quadrant) const
 {
 	const int32 HasEvenWidth = Dimensions.X % 2 == 0 ? 1 : 0;
 	const int32 HasEvenHeight = Dimensions.Y % 2 == 0 ? 1 : 0;
@@ -366,22 +485,22 @@ FIntPoint UInv_InventoryGrid::CalculateStartingCoordinate(const FIntPoint& Coord
 	FIntPoint StartingCoord;
 	switch (Quadrant)
 	{
-		case EInv_TileQuadrant::TopLeft:
-			StartingCoord.X = Coordinate.X - FMath::FloorToInt(0.5f * Dimensions.X);
-			StartingCoord.Y = Coordinate.Y - FMath::FloorToInt(0.5f * Dimensions.Y);
-			break;
-		case EInv_TileQuadrant::TopRight:
-			StartingCoord.X = Coordinate.X - FMath::FloorToInt(0.5f * Dimensions.X) + HasEvenWidth;
-			StartingCoord.Y = Coordinate.Y - FMath::FloorToInt(0.5f * Dimensions.Y);
-			break;
-		case EInv_TileQuadrant::BottomLeft:
-			StartingCoord.X = Coordinate.X - FMath::FloorToInt(0.5f * Dimensions.X);
-			StartingCoord.Y = Coordinate.Y - FMath::FloorToInt(0.5f * Dimensions.Y) + HasEvenHeight;
-			break;
-		case EInv_TileQuadrant::BottomRight:
-			StartingCoord.X = Coordinate.X - FMath::FloorToInt(0.5f * Dimensions.X) + HasEvenWidth;
-			StartingCoord.Y = Coordinate.Y - FMath::FloorToInt(0.5f * Dimensions.Y) + HasEvenHeight;
-			break;
+	case EInv_TileQuadrant::TopLeft:
+		StartingCoord.X = Coordinate.X - FMath::FloorToInt(0.5f * Dimensions.X);
+		StartingCoord.Y = Coordinate.Y - FMath::FloorToInt(0.5f * Dimensions.Y);
+		break;
+	case EInv_TileQuadrant::TopRight:
+		StartingCoord.X = Coordinate.X - FMath::FloorToInt(0.5f * Dimensions.X) + HasEvenWidth;
+		StartingCoord.Y = Coordinate.Y - FMath::FloorToInt(0.5f * Dimensions.Y);
+		break;
+	case EInv_TileQuadrant::BottomLeft:
+		StartingCoord.X = Coordinate.X - FMath::FloorToInt(0.5f * Dimensions.X);
+		StartingCoord.Y = Coordinate.Y - FMath::FloorToInt(0.5f * Dimensions.Y) + HasEvenHeight;
+		break;
+	case EInv_TileQuadrant::BottomRight:
+		StartingCoord.X = Coordinate.X - FMath::FloorToInt(0.5f * Dimensions.X) + HasEvenWidth;
+		StartingCoord.Y = Coordinate.Y - FMath::FloorToInt(0.5f * Dimensions.Y) + HasEvenHeight;
+		break;
 	default:
 		UE_LOG(LogInventory, Error, TEXT("Invalid Quadrant."))
 		return FIntPoint(-1, -1);
@@ -389,7 +508,8 @@ FIntPoint UInv_InventoryGrid::CalculateStartingCoordinate(const FIntPoint& Coord
 	return StartingCoord;
 }
 
-FIntPoint UInv_InventoryGrid::CalculateHoveredCoordinates(const FVector2D& CanvasPosition, const FVector2D& MousePosition) const
+FIntPoint UInv_InventoryGrid::CalculateHoveredCoordinates(const FVector2D& CanvasPosition,
+                                                          const FVector2D& MousePosition) const
 {
 	return FIntPoint{
 		static_cast<int32>(FMath::FloorToInt((MousePosition.X - CanvasPosition.X) / TileSize)),
@@ -397,7 +517,8 @@ FIntPoint UInv_InventoryGrid::CalculateHoveredCoordinates(const FVector2D& Canva
 	};
 }
 
-EInv_TileQuadrant UInv_InventoryGrid::CalculateTileQuadrant(const FVector2D& CanvasPosition, const FVector2D& MousePosition) const
+EInv_TileQuadrant UInv_InventoryGrid::CalculateTileQuadrant(const FVector2D& CanvasPosition,
+                                                            const FVector2D& MousePosition) const
 {
 	// Calculate relative position within the current tile
 	const float TileLocalX = FMath::Fmod(MousePosition.X - CanvasPosition.X, TileSize);
@@ -418,29 +539,33 @@ EInv_TileQuadrant UInv_InventoryGrid::CalculateTileQuadrant(const FVector2D& Can
 
 
 bool UInv_InventoryGrid::HasRoomAtIndex(const UInv_GridSlot* GridSlot, const FIntPoint& Dimensions,
-	const TSet<int32>& CheckedIndices, TSet<int32>& OutTentativelyClaimed, const FName ItemID, const int32 MaxStackSize)
+                                        const TSet<int32>& CheckedIndices, TSet<int32>& OutTentativelyClaimed,
+                                        const FName ItemID, const int32 MaxStackSize)
 {
 	// Is there room at this index? (i.e. are there other items in the way?)
 	bool bHasRoomAtIndex = true;
-	UInv_InventoryStatics::ForEach2D(GridSlots, GridSlot->GetIndex(), Dimensions, Columns, [&](const UInv_GridSlot* SubGridSlot)
-	{
-		if (CheckSlotConstraints(GridSlot, SubGridSlot, CheckedIndices, OutTentativelyClaimed, ItemID, MaxStackSize))
-		{
-			OutTentativelyClaimed.Add(SubGridSlot->GetIndex());
-		}
-		else
-		{
-			bHasRoomAtIndex = false;
-		}
-	});
+	UInv_InventoryStatics::ForEach2D(GridSlots, GridSlot->GetIndex(), Dimensions, Columns,
+	                                 [&](const UInv_GridSlot* SubGridSlot)
+	                                 {
+		                                 if (CheckSlotConstraints(GridSlot, SubGridSlot, CheckedIndices,
+		                                                          OutTentativelyClaimed, ItemID, MaxStackSize))
+		                                 {
+			                                 OutTentativelyClaimed.Add(SubGridSlot->GetIndex());
+		                                 }
+		                                 else
+		                                 {
+			                                 bHasRoomAtIndex = false;
+		                                 }
+	                                 });
 
 	return bHasRoomAtIndex;
 }
 
 
 bool UInv_InventoryGrid::CheckSlotConstraints(const UInv_GridSlot* GridSlot, const UInv_GridSlot* SubGridSlot,
-	const TSet<int32>& CheckedIndices, TSet<int32>& OutTentativelyClaimed, const FName ItemID,
-	const int32 MaxStackSize) const
+                                              const TSet<int32>& CheckedIndices, TSet<int32>& OutTentativelyClaimed,
+                                              const FName ItemID,
+                                              const int32 MaxStackSize) const
 {
 	if (IsIndexClaimed(CheckedIndices, SubGridSlot->GetIndex())) return false;
 
@@ -493,7 +618,8 @@ bool UInv_InventoryGrid::IsInGridBounds(const int32 StartIndex, const FIntPoint&
 	return EndColumn <= Columns && EndRow <= Rows;
 }
 
-int32 UInv_InventoryGrid::DetermineFillAmountForSlot(const bool bStackable, const int32 MaxStackSize, const int32 AmountToFill, const UInv_GridSlot* GridSlot) const
+int32 UInv_InventoryGrid::DetermineFillAmountForSlot(const bool bStackable, const int32 MaxStackSize,
+                                                     const int32 AmountToFill, const UInv_GridSlot* GridSlot) const
 {
 	const int32 RoomInSlot = MaxStackSize - GetStackAmount(GridSlot);
 	return bStackable ? FMath::Min(AmountToFill, RoomInSlot) : 1;
@@ -521,13 +647,19 @@ bool UInv_InventoryGrid::IsLeftClick(const FPointerEvent& MouseEvent) const
 	return MouseEvent.GetEffectingButton() == EKeys::LeftMouseButton;
 }
 
+bool UInv_InventoryGrid::IsMiddleClick(const FPointerEvent& MouseEvent) const
+{
+	return MouseEvent.GetEffectingButton() == EKeys::MiddleMouseButton;
+}
+
 void UInv_InventoryGrid::PickUp(UInv_InventoryItem* ClickedInventoryItem, const int32 GridIndex)
 {
 	AssignHoverItem(ClickedInventoryItem, GridIndex, GridIndex);
 	RemoveItemFromGrid(ClickedInventoryItem, GridIndex);
 }
 
-void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem, const int32 GridIndex, const int32 PreviousGridIndex)
+void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem, const int32 GridIndex,
+                                         const int32 PreviousGridIndex)
 {
 	AssignHoverItem(InventoryItem);
 
@@ -540,14 +672,15 @@ void UInv_InventoryGrid::RemoveItemFromGrid(UInv_InventoryItem* InventoryItem, c
 	const FInv_GridFragment* GridFragment = GetFragment<FInv_GridFragment>(InventoryItem, FragmentTags::GridFragment);
 	if (!GridFragment) return;
 
-	UInv_InventoryStatics::ForEach2D(GridSlots, GridIndex, GridFragment->GetGridSize(), Columns, [&](UInv_GridSlot* GridSlot)
-	{
-		GridSlot->SetInventoryItem(nullptr);
-		GridSlot->SetUpperLeftIndex(INDEX_NONE);
-		GridSlot->SetUnoccupiedTexture();
-		GridSlot->SetAvailable(true);
-		GridSlot->SetStackCount(0);
-	});
+	UInv_InventoryStatics::ForEach2D(GridSlots, GridIndex, GridFragment->GetGridSize(), Columns,
+	                                 [&](UInv_GridSlot* GridSlot)
+	                                 {
+		                                 GridSlot->SetInventoryItem(nullptr);
+		                                 GridSlot->SetUpperLeftIndex(INDEX_NONE);
+		                                 GridSlot->SetUnoccupiedTexture();
+		                                 GridSlot->SetAvailable(true);
+		                                 GridSlot->SetStackCount(0);
+	                                 });
 
 	if (SlottedItems.Contains(GridIndex))
 	{
@@ -565,7 +698,8 @@ void UInv_InventoryGrid::AssignHoverItem(UInv_InventoryItem* InventoryItem)
 	}
 
 	const FInv_GridFragment* GridFragment = GetFragment<FInv_GridFragment>(InventoryItem, FragmentTags::GridFragment);
-	const FInv_ImageFragment* ImageFragment = GetFragment<FInv_ImageFragment>(InventoryItem, FragmentTags::IconFragment);
+	const FInv_ImageFragment* ImageFragment = GetFragment<
+		FInv_ImageFragment>(InventoryItem, FragmentTags::IconFragment);
 	if (!GridFragment || !ImageFragment) return;
 
 	const FVector2D DrawSize = GetDrawSize(GridFragment);
@@ -617,9 +751,16 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 		return;
 	}
 
+	if (!bPlayerOwnedInventory && (IsLeftClick(MouseEvent) || IsRightClick(MouseEvent)))
+	{
+		UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
+		return;
+	}
+
 	// Snapshot pointers BEFORE any unhover/cleanup, because unhover can invalidate hover state.
-	const bool bLeftClick  = IsLeftClick(MouseEvent);
+	const bool bLeftClick = IsLeftClick(MouseEvent);
 	const bool bRightClick = IsRightClick(MouseEvent);
+	const bool bMiddleClick = IsMiddleClick(MouseEvent);
 
 	UInv_InventoryItem* ClickedInventoryItem = GridSlots[GridIndex]->GetInventoryItem().Get();
 	const bool bClickedItemValid = IsValid(ClickedInventoryItem);
@@ -629,10 +770,76 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 	UInv_InventoryItem* HoverInvItem = bHasHoverWidget ? HoverItem->GetInventoryItem() : nullptr;
 	const bool bHoverInvItemValid = IsValid(HoverInvItem);
 
+	UE_LOG(LogTemp, Warning, TEXT("[INV][GridClick] idx=%d L=%d R=%d M=%d PlayerOwned=%d UIMode=%d"),
+	       GridIndex, bLeftClick, bRightClick, bMiddleClick, bPlayerOwnedInventory, (int32)UIMode);
+
+	// MIDDLE CLICK = Sell (only from player inventory, only if merchant UI context)
+	if (bMiddleClick)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[INV][MMB] detected idx=%d"), GridIndex);
+
+		if (!bClickedItemValid)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[INV][MMB] blocked: clicked item invalid"));
+			UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
+			return;
+		}
+
+		AInv_PlayerController* InvPC = Cast<AInv_PlayerController>(GetOwningPlayer());
+		if (!InvPC)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[INV][MMB] blocked: InvPC cast failed"));
+			UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
+			return;
+		}
+
+		// We need the "trade pair" to exist. This works if you did the symmetric link fix.
+		UInv_InventoryComponent* ThisInv = InventoryComponent.Get();
+		UInv_InventoryComponent* OtherInv = IsValid(ThisInv) ? ThisInv->GetExternalInventoryComp() : nullptr;
+
+		if (!IsValid(ThisInv) || !IsValid(OtherInv))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[INV][MMB] blocked: no external inventory open"));
+			UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
+			return;
+		}
+
+		const FName ItemID = ClickedInventoryItem->GetItemID();
+		const int32 Quantity = MouseEvent.IsShiftDown() ? GridSlots[GridIndex]->GetStackCount() : 1;
+
+		// ✅ Branch by context
+		if (bPlayerOwnedInventory && UIMode == EInv_GridUIMode::PlayerInventory)
+		{
+			// SELL: Player -> Merchant
+			UE_LOG(LogTemp, Warning, TEXT("[INV][Sell] MMB -> Server_MoveItem %s Qty=%d"), *ItemID.ToString(), Quantity);
+			InvPC->Server_MoveItem(ThisInv, OtherInv, ItemID, Quantity, EInv_MoveReason::Sell);
+		}
+		else if (!bPlayerOwnedInventory /* merchant/external grid */)
+		{
+			// BUY/BACK: Merchant -> Player
+			UE_LOG(LogTemp, Warning, TEXT("[INV][Buy] MMB -> Server_MoveItem %s Qty=%d"), *ItemID.ToString(), Quantity);
+			InvPC->Server_MoveItem(ThisInv, OtherInv, ItemID, Quantity, EInv_MoveReason::Buy);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[INV][MMB] blocked: unsupported grid context PlayerOwned=%d UIMode=%d"),
+				bPlayerOwnedInventory, (int32)UIMode);
+		}
+
+		UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
+		return;
+	}
+
 	// Context menu / popup should typically work even if slot is empty (if you want), but you currently assume item exists.
 	if (bRightClick)
 	{
-		// If you need to support popup on empty slot, handle it in CreateItemPopUp.
+		if (UIMode == EInv_GridUIMode::ExternalInventory)
+		{
+			// No item popup in external inventory
+			UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
+			return;
+		}
+
 		if (bClickedItemValid)
 		{
 			CreateItemPopUp(GridIndex);
@@ -645,6 +852,13 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 	// LEFT CLICK behavior
 	if (bLeftClick)
 	{
+		if (UIMode == EInv_GridUIMode::ExternalInventory)
+		{
+			// You can handle "buy on left click" here if you want:
+			// RequestBuy(ClickedInventoryItem, 1);
+			UInv_InventoryStatics::ItemUnhovered(GetOwningPlayer());
+			return;
+		}
 		// If we're not holding anything (no hover item), clicking a valid item picks it up.
 		if (!bHasHoverWidget)
 		{
@@ -686,7 +900,8 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 			const int32 MaxStackSize = ClickedStackFrag->GetMaxStackSize();
 			const int32 RoomInClickedSlot = MaxStackSize - ClickedStackCount;
 
-			const int32 HoveredStackCount = HoverItem->GetStackCount(); // HoverItem is valid, but stack count should be safe
+			const int32 HoveredStackCount = HoverItem->GetStackCount();
+			// HoverItem is valid, but stack count should be safe
 			// If HoverItem->GetStackCount() internally uses invalid data, you must guard it similarly.
 
 			if (ShouldSwapStackCounts(RoomInClickedSlot, HoveredStackCount, MaxStackSize))
@@ -731,19 +946,55 @@ void UInv_InventoryGrid::OnSlottedItemClicked(int32 GridIndex, const FPointerEve
 
 void UInv_InventoryGrid::CreateItemPopUp(const int32 GridIndex)
 {
+	if (!GridSlots.IsValidIndex(GridIndex) || !IsValid(GridSlots[GridIndex])) return;
+
+	if (!ItemPopUpClass) return;
+
 	UInv_InventoryItem* RightClickedItem = GridSlots[GridIndex]->GetInventoryItem().Get();
 	if (!IsValid(RightClickedItem)) return;
+
+	// Prevent duplicates for that slot
 	if (IsValid(GridSlots[GridIndex]->GetItemPopUp())) return;
 
-	ItemPopUp = CreateWidget<UInv_ItemPopUp>(this, ItemPopUpClass);
+	APlayerController* PC = GetOwningPlayer();
+	if (!IsValid(PC) || !ItemPopUpClass) return;
+
+	ItemPopUp = CreateWidget<UInv_ItemPopUp>(PC, ItemPopUpClass);
+	if (!IsValid(ItemPopUp)) return;
+
 	GridSlots[GridIndex]->SetItemPopUp(ItemPopUp);
 
-	OwningCanvasPanel->AddChild(ItemPopUp);
-	UCanvasPanelSlot* CanvasSlot = UWidgetLayoutLibrary::SlotAsCanvasSlot(ItemPopUp);
-	const FVector2D MousePosition = UWidgetLayoutLibrary::GetMousePositionOnViewport(GetOwningPlayer());
-	CanvasSlot->SetPosition(MousePosition - ItemPopUpOffset);
-	CanvasSlot->SetSize(ItemPopUp->GetBoxSize());
+	// Put popup on screen (no Canvas dependency)
+	ItemPopUp->AddToPlayerScreen(/*ZOrder*/ 500);
+	ItemPopUp->SetVisibility(ESlateVisibility::Visible); // or SelfHitTestInvisible if only container should ignore hits
+	ItemPopUp->SetIsEnabled(true);
+	// Ensure DesiredSize is valid (important right after CreateWidget)
+	ItemPopUp->ForceLayoutPrepass();
 
+	// Position near mouse, but clamp to viewport
+	FVector2D MousePos;
+	if (!PC->GetMousePosition(MousePos.X, MousePos.Y))
+	{
+		int32 VX = 0, VY = 0;
+		PC->GetViewportSize(VX, VY);
+		MousePos = FVector2D(VX * 0.5f, VY * 0.5f);
+	}
+
+	const FVector2D PopupSize = ItemPopUp->GetDesiredSize();
+	const FVector2D ViewportSize = UWidgetLayoutLibrary::GetViewportSize(this);
+
+	// You previously used MousePosition - ItemPopUpOffset
+	FVector2D Desired = MousePos - ItemPopUpOffset;
+
+	// Clamp so it stays fully visible
+	Desired.X = FMath::Clamp(Desired.X, 0.f, FMath::Max(0.f, ViewportSize.X - PopupSize.X));
+	Desired.Y = FMath::Clamp(Desired.Y, 0.f, FMath::Max(0.f, ViewportSize.Y - PopupSize.Y));
+
+	// Top-left alignment is easier for clamp math
+	ItemPopUp->SetAlignmentInViewport(FVector2D(0.f, 0.f));
+	ItemPopUp->SetPositionInViewport(Desired, /*bRemoveDPIScale*/ true);
+
+	// ---- existing logic unchanged ----
 	const int32 SliderMax = GridSlots[GridIndex]->GetStackCount() - 1;
 	if (RightClickedItem->IsStackable() && SliderMax > 0)
 	{
@@ -804,7 +1055,7 @@ void UInv_InventoryGrid::AddItem(UInv_InventoryItem* Item)
 	if (!MatchesCategory(Item)) return;
 
 	FInv_SlotAvailabilityResult Result = HasRoomForItem(Item);
-	AddItemToIndices(Result, Item);	
+	AddItemToIndices(Result, Item);
 }
 
 void UInv_InventoryGrid::AddItemToIndices(const FInv_SlotAvailabilityResult& Result, UInv_InventoryItem* NewItem)
@@ -816,19 +1067,23 @@ void UInv_InventoryGrid::AddItemToIndices(const FInv_SlotAvailabilityResult& Res
 	}
 }
 
-void UInv_InventoryGrid::AddItemAtIndex(UInv_InventoryItem* Item, const int32 Index, const bool bStackable, const int32 StackAmount)
+void UInv_InventoryGrid::AddItemAtIndex(UInv_InventoryItem* Item, const int32 Index, const bool bStackable,
+                                        const int32 StackAmount)
 {
 	const FInv_GridFragment* GridFragment = GetFragment<FInv_GridFragment>(Item, FragmentTags::GridFragment);
 	const FInv_ImageFragment* ImageFragment = GetFragment<FInv_ImageFragment>(Item, FragmentTags::IconFragment);
 	if (!GridFragment || !ImageFragment) return;
 
-	UInv_SlottedItem* SlottedItem = CreateSlottedItem(Item, bStackable, StackAmount, GridFragment, ImageFragment, Index);
+	UInv_SlottedItem* SlottedItem =
+		CreateSlottedItem(Item, bStackable, StackAmount, GridFragment, ImageFragment, Index);
 	AddSlottedItemToCanvas(Index, GridFragment, SlottedItem);
-	
+
 	SlottedItems.Add(Index, SlottedItem);
 }
 
-UInv_SlottedItem* UInv_InventoryGrid::CreateSlottedItem(UInv_InventoryItem* Item, const bool bStackable, const int32 StackAmount, const FInv_GridFragment* GridFragment, const FInv_ImageFragment* ImageFragment, const int32 Index)
+UInv_SlottedItem* UInv_InventoryGrid::CreateSlottedItem(UInv_InventoryItem* Item, const bool bStackable,
+                                                        const int32 StackAmount, const FInv_GridFragment* GridFragment,
+                                                        const FInv_ImageFragment* ImageFragment, const int32 Index)
 {
 	UInv_SlottedItem* SlottedItem = CreateWidget<UInv_SlottedItem>(GetOwningPlayer(), SlottedItemClass);
 	SlottedItem->SetInventoryItem(Item);
@@ -842,7 +1097,8 @@ UInv_SlottedItem* UInv_InventoryGrid::CreateSlottedItem(UInv_InventoryItem* Item
 	return SlottedItem;
 }
 
-void UInv_InventoryGrid::AddSlottedItemToCanvas(const int32 Index, const FInv_GridFragment* GridFragment, UInv_SlottedItem* SlottedItem) const
+void UInv_InventoryGrid::AddSlottedItemToCanvas(const int32 Index, const FInv_GridFragment* GridFragment,
+                                                UInv_SlottedItem* SlottedItem) const
 {
 	CanvasPanel->AddChild(SlottedItem);
 	UCanvasPanelSlot* CanvasSlot = UWidgetLayoutLibrary::SlotAsCanvasSlot(SlottedItem);
@@ -852,7 +1108,8 @@ void UInv_InventoryGrid::AddSlottedItemToCanvas(const int32 Index, const FInv_Gr
 	CanvasSlot->SetPosition(DrawPosWithPadding);
 }
 
-void UInv_InventoryGrid::UpdateGridSlots(UInv_InventoryItem* NewItem, const int32 Index, bool bStackableItem, const int32 StackAmount)
+void UInv_InventoryGrid::UpdateGridSlots(UInv_InventoryItem* NewItem, const int32 Index, bool bStackableItem,
+                                         const int32 StackAmount)
 {
 	check(GridSlots.IsValidIndex(Index));
 
@@ -884,7 +1141,8 @@ FVector2D UInv_InventoryGrid::GetDrawSize(const FInv_GridFragment* GridFragment)
 	return GridFragment->GetGridSize() * IconTileWidth;
 }
 
-void UInv_InventoryGrid::SetSlottedItemImage(const UInv_SlottedItem* SlottedItem, const FInv_GridFragment* GridFragment, const FInv_ImageFragment* ImageFragment) const
+void UInv_InventoryGrid::SetSlottedItemImage(const UInv_SlottedItem* SlottedItem, const FInv_GridFragment* GridFragment,
+                                             const FInv_ImageFragment* ImageFragment) const
 {
 	FSlateBrush Brush;
 	Brush.SetResourceObject(ImageFragment->GetIcon());
@@ -921,6 +1179,17 @@ void UInv_InventoryGrid::ConstructGrid()
 
 void UInv_InventoryGrid::OnGridSlotClicked(int32 GridIndex, const FPointerEvent& MouseEvent)
 {
+	if (UIMode == EInv_GridUIMode::ExternalInventory)
+	{
+		// external is not a place you can drop hover items into
+		return;
+	}
+
+	if (!bPlayerOwnedInventory)
+	{
+		return;
+	}
+
 	if (!IsValid(HoverItem)) return;
 	if (!GridSlots.IsValidIndex(ItemDropIndex)) return;
 
@@ -1000,7 +1269,7 @@ bool UInv_InventoryGrid::IsSameStackable(const UInv_InventoryItem* ClickedInvent
 	}
 
 	const FName ClickedID = ClickedInventoryItem->GetItemID();
-	const FName HoverID   = HoverInvItem->GetItemID();
+	const FName HoverID = HoverInvItem->GetItemID();
 
 	return !ClickedID.IsNone() && ClickedID == HoverID;
 }
@@ -1020,12 +1289,14 @@ void UInv_InventoryGrid::SwapWithHoverItem(UInv_InventoryItem* ClickedInventoryI
 	UpdateGridSlots(TempInventoryItem, ItemDropIndex, bTempIsStackable, TempStackCount);
 }
 
-bool UInv_InventoryGrid::ShouldSwapStackCounts(const int32 RoomInClickedSlot, const int32 HoveredStackCount, const int32 MaxStackSize) const
+bool UInv_InventoryGrid::ShouldSwapStackCounts(const int32 RoomInClickedSlot, const int32 HoveredStackCount,
+                                               const int32 MaxStackSize) const
 {
 	return RoomInClickedSlot == 0 && HoveredStackCount < MaxStackSize;
 }
 
-void UInv_InventoryGrid::SwapStackCounts(const int32 ClickedStackCount, const int32 HoveredStackCount, const int32 Index)
+void UInv_InventoryGrid::SwapStackCounts(const int32 ClickedStackCount, const int32 HoveredStackCount,
+                                         const int32 Index)
 {
 	UInv_GridSlot* GridSlot = GridSlots[Index];
 	GridSlot->SetStackCount(HoveredStackCount);
@@ -1036,12 +1307,14 @@ void UInv_InventoryGrid::SwapStackCounts(const int32 ClickedStackCount, const in
 	HoverItem->UpdateStackCount(ClickedStackCount);
 }
 
-bool UInv_InventoryGrid::ShouldConsumeHoverItemStacks(const int32 HoveredStackCount, const int32 RoomInClickedSlot) const
+bool UInv_InventoryGrid::ShouldConsumeHoverItemStacks(const int32 HoveredStackCount,
+                                                      const int32 RoomInClickedSlot) const
 {
 	return RoomInClickedSlot >= HoveredStackCount;
 }
 
-void UInv_InventoryGrid::ConsumeHoverItemStacks(const int32 ClickedStackCount, const int32 HoveredStackCount, const int32 Index)
+void UInv_InventoryGrid::ConsumeHoverItemStacks(const int32 ClickedStackCount, const int32 HoveredStackCount,
+                                                const int32 Index)
 {
 	const int32 AmountToTransfer = HoveredStackCount;
 	const int32 NewClickedStackCount = ClickedStackCount + AmountToTransfer;
@@ -1051,7 +1324,8 @@ void UInv_InventoryGrid::ConsumeHoverItemStacks(const int32 ClickedStackCount, c
 	ClearHoverItem();
 	ShowCursor();
 
-	const FInv_GridFragment* GridFragment = GridSlots[Index]->GetInventoryItem()->GetItemManifest().GetFragmentOfType<FInv_GridFragment>();
+	const FInv_GridFragment* GridFragment = GridSlots[Index]->GetInventoryItem()->GetItemManifest().GetFragmentOfType<
+		FInv_GridFragment>();
 	const FIntPoint Dimensions = GridFragment ? GridFragment->GetGridSize() : FIntPoint(1, 1);
 	HighlightSlots(Index, Dimensions);
 }
@@ -1077,6 +1351,14 @@ void UInv_InventoryGrid::FillInStack(const int32 FillAmount, const int32 Remaind
 void UInv_InventoryGrid::ShowCursor()
 {
 	if (!IsValid(GetOwningPlayer())) return;
+
+	// If we're dragging, keep the drag cursor
+	if (IsValid(HoverItem))
+	{
+		GetOwningPlayer()->SetMouseCursorWidget(EMouseCursor::Default, GetVisibleCursorWidget());
+		return;
+	}
+
 	GetOwningPlayer()->SetMouseCursorWidget(EMouseCursor::Default, GetVisibleCursorWidget());
 }
 
@@ -1165,6 +1447,18 @@ void UInv_InventoryGrid::OnInventoryMenuToggled(bool bOpen)
 	if (!bOpen)
 	{
 		PutHoverItemBack();
+
+		// Close any popups that might remain
+		for (UInv_GridSlot* GridSlot : GridSlots)
+		{
+			if (!IsValid(GridSlot)) continue;
+
+			if (UInv_ItemPopUp* Pop = GridSlot->GetItemPopUp())
+			{
+				Pop->RemoveFromParent();
+				GridSlot->SetItemPopUp(nullptr);
+			}
+		}
 	}
 }
 
