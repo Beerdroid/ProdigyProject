@@ -82,16 +82,31 @@ void UInventoryComponent::BroadcastSlotsChanged(const TArray<int32>& ChangedSlot
 
 	OnSlotsChanged.Broadcast(ChangedSlots);
 
+	// Collect item IDs affected by these slot changes
+	TSet<FName> ChangedItemIDs;
+
 	for (int32 SlotIdx : ChangedSlots)
 	{
-		if (Slots.IsValidIndex(SlotIdx))
+		if (!Slots.IsValidIndex(SlotIdx)) continue;
+
+		// Emit per-slot event
+		OnSlotChanged.Broadcast(SlotIdx, Slots[SlotIdx]);
+
+		// Current item in slot (after mutation)
+		if (!Slots[SlotIdx].ItemID.IsNone())
 		{
-			OnSlotChanged.Broadcast(SlotIdx, Slots[SlotIdx]);
+			ChangedItemIDs.Add(Slots[SlotIdx].ItemID);
 		}
 	}
 
-	// Optional: also raise coarse “inventory changed”
+	// Coarse inventory changed
 	OnInventoryChanged.Broadcast();
+
+	// NEW: notify per ItemID (quests depend on this)
+	for (FName ItemID : ChangedItemIDs)
+	{
+		OnItemIDChanged.Broadcast(ItemID);
+	}
 }
 
 void UInventoryComponent::InitializeSlots()
@@ -598,9 +613,11 @@ bool UInventoryComponent::DropFromSlot(int32 SlotIndex, int32 Quantity, FVector 
 	FInventorySlot& S = Slots[SlotIndex];
 	if (S.IsEmpty()) return false;
 
+	const FName DroppedItemID = S.ItemID; // ✅ capture BEFORE S.Clear / mutation
+
 	// Single access point (works whether you use Subsystem or GS+interface behind it)
 	FItemRow Row;
-	if (!TryGetItemDef(S.ItemID, Row)) return false;
+	if (!TryGetItemDef(DroppedItemID, Row)) return false;
 	if (Row.bNoDrop) return false;
 
 	const int32 Requested = (Quantity <= 0) ? S.Quantity : FMath::Min(Quantity, S.Quantity);
@@ -624,7 +641,7 @@ bool UInventoryComponent::DropFromSlot(int32 SlotIndex, int32 Quantity, FVector 
 		return false;
 	}
 
-	ItemComp->ItemID = S.ItemID;
+	ItemComp->ItemID = DroppedItemID;
 	ItemComp->Quantity = Requested;
 
 	// Remove from inventory
@@ -637,8 +654,7 @@ bool UInventoryComponent::DropFromSlot(int32 SlotIndex, int32 Quantity, FVector 
 	MarkSlotChanged(SlotIndex, OutChangedSlots);
 	BroadcastSlotsChanged(OutChangedSlots);
 
-	// Optional: if you added an "item changed" delegate for quests:
-	// OnItemIDChanged.Broadcast(ItemComp->ItemID);
+	OnItemIDChanged.Broadcast(DroppedItemID); // ✅ broadcast the old ID (never None here)
 
 	return true;
 }

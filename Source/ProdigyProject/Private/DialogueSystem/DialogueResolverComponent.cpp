@@ -122,14 +122,14 @@ void UDialogueResolverComponent::ApplyEffects(const TArray<FDialogueEffect>& Eff
 			if (QuestLog && !E.QuestID.IsNone())
 			{
 				// Call server RPC on QuestLog (safe if executed on client; UE will route it)
-				QuestLog->ServerAddQuest(E.QuestID);
+				QuestLog->AddQuest(E.QuestID);
 			}
 			break;
 
 		case EDialogueEffectOp::TurnInQuest:
 			if (QuestLog && !E.QuestID.IsNone())
 			{
-				QuestLog->ServerTurnInQuest(E.QuestID);
+				QuestLog->TurnInQuest(E.QuestID);
 			}
 			break;
 

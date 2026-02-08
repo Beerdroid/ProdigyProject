@@ -15,7 +15,7 @@ class PRODIGYPROJECT_API UQuestGiverComponent : public UActorComponent
 public:	
 	UQuestGiverComponent();
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Quests")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Quests")
 	TArray<FName> Quests;
 
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category="Quests")

@@ -39,10 +39,14 @@ public:
 	virtual int32 GetTotalQuantityByItemID_Implementation(FName ItemID) const override;
 	virtual bool AddItemByID_Implementation(FName ItemID, int32 Quantity, UObject* Context) override;
 	virtual void RemoveItemByID_Implementation(FName ItemID, int32 Quantity,  UObject* Context) override;
+	virtual bool GetItemViewByID_Implementation(FName ItemID, FInventorySlotView& OutView) const override;
 
 	// ---- IQuestRewardReceiver ----
 	virtual void AddCurrency_Implementation(int32 Amount) override;
 	virtual void AddXP_Implementation(int32 Amount) override;
+
+
+	
 
 	// ---- IQuestKillEventSource ----
 	virtual FOnQuestKillTagNative& GetKillDelegate() override { return OnQuestKillTagNative; }

@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "CoreMinimal.h"
+#include "ProdigyInventory/ItemTypes.h"
 #include "UObject/Interface.h"
 #include "Quest/QuestTypes.h"
 #include "QuestInventoryProvider.generated.h"
@@ -26,5 +27,5 @@ public:
 	void RemoveItemByID(FName ItemID, int32 Quantity, UObject* Context);
 
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Quest|Items")
-	bool GetItemViewByID(FName ItemID, FInv_ItemView& OutView) const;
+	bool GetItemViewByID(FName ItemID, FInventorySlotView& OutView) const;
 };
