@@ -4,10 +4,10 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
-#include "Items/Manifest/Inv_ItemManifest.h"
 #include "Types/Inv_GridTypes.h"
 #include "Inv_InventoryBase.generated.h"
 
+struct FInv_ItemManifest;
 class UInv_ItemComponent;
 class UInv_InventoryItem;
 class UInv_HoverItem;

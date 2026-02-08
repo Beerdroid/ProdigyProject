@@ -171,7 +171,7 @@ void UInvContextMenuWidget::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 
-	INV_CTX_LOG(Warning, TEXT("BindWidget ptrs: Split=%d Drop1=%d DropAll=%d Consume=%d Slider=%d Spin=%d Text=%d"),
+	INV_CTX_LOG(Warning, TEXT("BindWidget ptrs: Split=%d Drop1=%d DropAll=%d Consume=%d Slider=%d Text=%d"),
 	IsValid(Button_Split) ? 1 : 0,
 	IsValid(Button_DropOne) ? 1 : 0,
 	IsValid(Button_DropAll) ? 1 : 0,
