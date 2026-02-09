@@ -1,8 +1,10 @@
 #include "Player/ProdigyPlayerController.h"
 
+#include "AbilitySystem/ActionTypes.h"
 #include "Quest/QuestLogComponent.h"
 #include "Quest/Integration/QuestIntegrationComponent.h"
 #include "GameFramework/Actor.h"
+#include "Interfaces/CombatantInterface.h"
 #include "Interfaces/UInv_Interactable.h"
 #include "InventoryManagement/Components/Inv_InventoryComponent.h"
 
@@ -19,6 +21,22 @@ void AProdigyPlayerController::BeginPlay()
 
 	UE_LOG(LogTemp, Warning, TEXT("ProdigyPC BeginPlay: %s Local=%d Pawn=%s"),
 	*GetNameSafe(this), IsLocalController(), *GetNameSafe(GetPawn()));
+}
+
+bool AProdigyPlayerController::HandlePrimaryClickActor(AActor* ClickedActor)
+{
+	TARGET_LOG(Verbose,
+		TEXT("HandlePrimaryClickActor: %s"),
+		*GetNameSafe(ClickedActor)
+	);
+
+	if (TryLockTarget(ClickedActor))
+	{
+		TARGET_LOG(Log, TEXT("Click consumed by target lock"));
+		return true;
+	}
+
+	return false;
 }
 
 void AProdigyPlayerController::CacheQuestComponents()
@@ -106,6 +124,7 @@ void AProdigyPlayerController::PrimaryInteract()
 	}
 }
 
+
 void AProdigyPlayerController::Server_NotifyQuestsInventoryChanged_Implementation()
 {
 	CacheQuestComponents();
@@ -135,4 +154,102 @@ void AProdigyPlayerController::Server_NotifyQuestsKillTag_Implementation(FGamepl
 
 	// You can expose a BlueprintCallable server function instead, but this is fine if your QuestLog uses this signature.
 	QuestLog->NotifyKillObjectiveTag(TargetTag);
+}
+
+void AProdigyPlayerController::SetLockedTarget(AActor* NewTarget)
+{
+	if (LockedTarget == NewTarget) return;
+
+	TARGET_LOG(Log,
+	TEXT("LockTarget -> %s"),
+	*GetNameSafe(NewTarget)
+);
+
+	LockedTarget = NewTarget;
+	OnTargetLocked.Broadcast(LockedTarget);
+}
+
+void AProdigyPlayerController::ClearLockedTarget()
+{
+	if (!LockedTarget) return;
+
+	TARGET_LOG(Log,
+		TEXT("ClearTarget (was %s)"),
+		*GetNameSafe(LockedTarget)
+	);
+	
+	LockedTarget = nullptr;
+	OnTargetLocked.Broadcast(nullptr);
+}
+
+bool AProdigyPlayerController::TryLockTargetUnderCursor()
+{
+	FHitResult Hit;
+	const bool bHit = GetHitResultUnderCursor(
+		TargetTraceChannel,
+		/*bTraceComplex*/ false,
+		Hit
+	);
+
+	AActor* Candidate = bHit ? Hit.GetActor() : nullptr;
+
+	TARGET_LOG(Verbose,
+		TEXT("TryLockTargetUnderCursor: Hit=%d Actor=%s"),
+		bHit ? 1 : 0,
+		*GetNameSafe(Candidate)
+	);
+
+	if (!IsValid(Candidate))
+	{
+		ClearLockedTarget();
+		return false;
+	}
+
+	return TryLockTarget(Candidate);
+}
+
+bool AProdigyPlayerController::TryLockTarget(AActor* Candidate)
+{
+	if (!IsValid(Candidate))
+	{
+		TARGET_LOG(Verbose, TEXT("TryLockTarget: invalid candidate"));
+		return false;
+	}
+
+	if (bOnlyLockCombatants &&
+		!Candidate->GetClass()->ImplementsInterface(UCombatantInterface::StaticClass()))
+	{
+		TARGET_LOG(Verbose,
+			TEXT("TryLockTarget: rejected %s (not Combatant)"),
+			*GetNameSafe(Candidate)
+		);
+		return false;
+	}
+
+	// Toggle off
+	if (LockedTarget == Candidate)
+	{
+		TARGET_LOG(Log,
+			TEXT("TryLockTarget: toggle off %s"),
+			*GetNameSafe(Candidate)
+		);
+		ClearLockedTarget();
+		return true;
+	}
+
+	TARGET_LOG(Log,
+		TEXT("TryLockTarget: success -> %s"),
+		*GetNameSafe(Candidate)
+	);
+
+	SetLockedTarget(Candidate);
+	return true;
+}
+
+FActionContext AProdigyPlayerController::BuildActionContextFromLockedTarget() const
+{
+	FActionContext Ctx;
+	Ctx.Instigator = GetPawn();
+	Ctx.TargetActor = LockedTarget;
+	return Ctx;
 }

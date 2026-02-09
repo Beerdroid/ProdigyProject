@@ -707,6 +707,20 @@ void AInvPlayerController::OnSetDestinationCompleted()
 	}
 
 	bBlockMoveThisClick = false;
+
+	if (!bBlockMoveThisClick && HeldSeconds < PressedThreshold)
+	{
+		AActor* Clicked = GetActorUnderCursorForClick(); // plugin-local helper; no game deps
+		if (HandlePrimaryClickActor(Clicked))
+		{
+			bBlockMoveThisClick = true;
+		}
+
+		if (!bBlockMoveThisClick)
+		{
+			MoveTo(CachedDestination);
+		}
+	}
 }
 
 void AInvPlayerController::OnSetDestinationCanceled()
@@ -1148,4 +1162,27 @@ bool AInvPlayerController::ExecuteInventoryAction(UInventoryComponent* Source, i
 	}
 
 	return true;
+}
+
+AActor* AInvPlayerController::GetActorUnderCursorForClick() const
+{
+	FHitResult Hit;
+
+	// Prefer interact trace for characters/NPCs/world, because ItemTraceChannel is tuned for pickups.
+	const bool bHitInteract = GetHitResultUnderCursorByChannel(
+		UEngineTypes::ConvertToTraceType(InteractTraceChannel),
+		false,
+		Hit
+	);
+
+	if (bHitInteract && Hit.GetActor()) return Hit.GetActor();
+
+	// Fallback to item trace
+	const bool bHitItem = GetHitResultUnderCursorByChannel(
+		UEngineTypes::ConvertToTraceType(ItemTraceChannel),
+		false,
+		Hit
+	);
+
+	return bHitItem ? Hit.GetActor() : nullptr;
 }
