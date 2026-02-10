@@ -1,6 +1,6 @@
-﻿#include "InvDragDropOp.h"
+﻿#include "ProdigyInventory/InvDragDropOp.h"
 
-#include "InvPlayerController.h"
+#include "ProdigyInventory/InvPlayerController.h"
 
 void UInvDragDropOp::DragCancelled_Implementation(const FPointerEvent& PointerEvent)
 {

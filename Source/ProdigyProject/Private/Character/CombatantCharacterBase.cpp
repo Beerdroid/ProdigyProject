@@ -1,4 +1,5 @@
-﻿#include "CombatantCharacterBase.h"
+﻿
+#include "Character/CombatantCharacterBase.h"
 
 #include "AbilitySystem/ActionComponent.h"
 #include "AbilitySystem/TurnResourceComponent.h"

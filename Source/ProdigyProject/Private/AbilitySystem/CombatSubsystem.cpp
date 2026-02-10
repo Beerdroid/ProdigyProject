@@ -1,7 +1,7 @@
-﻿#include "CombatSubsystem.h"
+﻿
+#include "AbilitySystem/CombatSubsystem.h"
 
-#include "ActionComponent.h"
-#include "Interfaces/CombatantInterface.h"
+#include "AbilitySystem/ActionComponent.h"
 
 bool UCombatSubsystem::IsValidCombatant(AActor* A) const
 {

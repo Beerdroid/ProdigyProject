@@ -1,4 +1,4 @@
-﻿#include "ProdigyGameplayTags.h"
+﻿#include "AbilitySystem/ProdigyGameplayTags.h"
 
 // =======================
 // ACTION TAGS
