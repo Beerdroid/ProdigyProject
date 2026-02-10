@@ -35,7 +35,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Action")
 	bool IsInCombat() const { return bInCombat; }
 
-
 	UFUNCTION(BlueprintCallable, Category="Action")
 	FActionQueryResult QueryAction(FGameplayTag ActionTag, const FActionContext& Context) const;
 
@@ -67,8 +66,5 @@ private:
 	bool IsTargetValid(const UActionDefinition* Def, const FActionContext& Context) const;
 
 	void StartCooldown(const UActionDefinition* Def);
-	void TickTurnCooldowns();
-
-	void DecrementCombatCooldowns();
 };
 

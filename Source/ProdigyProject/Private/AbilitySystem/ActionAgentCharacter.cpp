@@ -2,9 +2,9 @@
 
 AActionAgentCharacter::AActionAgentCharacter()
 {
-	TurnResource = CreateDefaultSubobject<UTurnResourceComponent>(TEXT("TurnResource"));
-	Health = CreateDefaultSubobject<UHealthComponent>(TEXT("Health"));
-	Status = CreateDefaultSubobject<UStatusComponent>(TEXT("Status"));
+	Health       = CreateDefaultSubobject<UHealthComponent>(TEXT("Health"));
+	Status       = CreateDefaultSubobject<UStatusComponent>(TEXT("Status"));
+	Attributes   = CreateDefaultSubobject<UAttributesComponent>(TEXT("Attributes"));
 }
 
 void AActionAgentCharacter::GetOwnedGameplayTags_Implementation(FGameplayTagContainer& OutTags) const
@@ -15,23 +15,21 @@ void AActionAgentCharacter::GetOwnedGameplayTags_Implementation(FGameplayTagCont
 	{
 		Status->GetOwnedTags(OutTags);
 	}
-
-	// Optional: add equipment/combat mode tags later from other systems here.
 }
 
-bool AActionAgentCharacter::HasActionPoints_Implementation(int32 Amount) const
+bool AActionAgentCharacter::HasAttribute_Implementation(FGameplayTag AttributeTag) const
 {
-	return IsValid(TurnResource) ? TurnResource->HasAP(Amount) : (Amount <= 0);
+	return IsValid(Attributes) ? Attributes->HasAttribute(AttributeTag) : false;
 }
 
-bool AActionAgentCharacter::SpendActionPoints_Implementation(int32 Amount)
+float AActionAgentCharacter::GetAttributeCurrentValue_Implementation(FGameplayTag AttributeTag) const
 {
-	return IsValid(TurnResource) ? TurnResource->SpendAP(Amount) : (Amount <= 0);
+	return IsValid(Attributes) ? Attributes->GetCurrentValue(AttributeTag) : 0.f;
 }
 
-bool AActionAgentCharacter::ApplyDamage_Implementation(float Amount, AActor* InstigatorActor)
+bool AActionAgentCharacter::ModifyAttributeCurrentValue_Implementation(FGameplayTag AttributeTag, float Delta, AActor* InstigatorActor)
 {
-	return IsValid(Health) ? Health->ApplyDamage(Amount, InstigatorActor) : false;
+	return IsValid(Attributes) ? Attributes->ModifyCurrentValue(AttributeTag, Delta, InstigatorActor) : false;
 }
 
 bool AActionAgentCharacter::AddStatusTag_Implementation(const FGameplayTag& StatusTag, int32 Turns, float Seconds, AActor* InstigatorActor)

@@ -2,7 +2,6 @@
 #include "Character/CombatantCharacterBase.h"
 
 #include "AbilitySystem/ActionComponent.h"
-#include "AbilitySystem/TurnResourceComponent.h"
 #include "AbilitySystem/HealthComponent.h"
 #include "AbilitySystem/StatusComponent.h"
 
@@ -12,7 +11,6 @@
 
 ACombatantCharacterBase::ACombatantCharacterBase()
 {
-	TurnResource = CreateDefaultSubobject<UTurnResourceComponent>(TEXT("TurnResource"));
 	Health       = CreateDefaultSubobject<UHealthComponent>(TEXT("Health"));
 	Status       = CreateDefaultSubobject<UStatusComponent>(TEXT("Status"));
 	ActionComponent = CreateDefaultSubobject<UActionComponent>(TEXT("ActionComponent"));
@@ -69,21 +67,6 @@ void ACombatantCharacterBase::GetOwnedGameplayTags_Implementation(FGameplayTagCo
 	{
 		Status->GetOwnedTags(OutTags);
 	}
-}
-
-bool ACombatantCharacterBase::HasActionPoints_Implementation(int32 Amount) const
-{
-	return TurnResource ? TurnResource->HasAP(Amount) : (Amount <= 0);
-}
-
-bool ACombatantCharacterBase::SpendActionPoints_Implementation(int32 Amount)
-{
-	return TurnResource ? TurnResource->SpendAP(Amount) : (Amount <= 0);
-}
-
-bool ACombatantCharacterBase::ApplyDamage_Implementation(float Amount, AActor* InstigatorActor)
-{
-	return Health ? Health->ApplyDamage(Amount, InstigatorActor) : false;
 }
 
 bool ACombatantCharacterBase::AddStatusTag_Implementation(const FGameplayTag& StatusTag, int32 Turns, float Seconds, AActor* InstigatorActor)

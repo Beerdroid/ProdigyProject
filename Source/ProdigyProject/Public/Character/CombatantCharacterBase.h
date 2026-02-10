@@ -27,9 +27,6 @@ protected:
 	TObjectPtr<UActionComponent> ActionComponent = nullptr;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat|Components")
-	TObjectPtr<UTurnResourceComponent> TurnResource = nullptr;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat|Components")
 	TObjectPtr<UHealthComponent> Health = nullptr;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat|Components")
@@ -38,7 +35,6 @@ protected:
 public:
 	// ---- ICombatantInterface ----
 	virtual UActionComponent* GetActionComponent_Implementation() const override { return ActionComponent; }
-	virtual UTurnResourceComponent* GetTurnResource_Implementation() const override { return TurnResource; }
 	virtual UStatusComponent* GetStatusComponent_Implementation() const override { return Status; }
 	virtual UHealthComponent* GetHealthComponent_Implementation() const override { return Health; }
 	virtual bool IsAlive_Implementation() const override;
@@ -47,8 +43,5 @@ public:
 
 	// ---- IActionAgentInterface ----
 	virtual void GetOwnedGameplayTags_Implementation(FGameplayTagContainer& OutTags) const override;
-	virtual bool HasActionPoints_Implementation(int32 Amount) const override;
-	virtual bool SpendActionPoints_Implementation(int32 Amount) override;
-	virtual bool ApplyDamage_Implementation(float Amount, AActor* InstigatorActor) override;
 	virtual bool AddStatusTag_Implementation(const FGameplayTag& StatusTag, int32 Turns, float Seconds, AActor* InstigatorActor) override;
 };

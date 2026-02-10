@@ -2,7 +2,10 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "GameplayTagContainer.h"
 #include "HealthComponent.generated.h"
+
+class UAttributesComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnHealthChanged, float, NewHealth, float, Delta, AActor*, InstigatorActor);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnDied, AActor*, Killer);
@@ -13,6 +16,7 @@ class PRODIGYPROJECT_API UHealthComponent : public UActorComponent
 	GENERATED_BODY()
 
 public:
+	// These are now defaults used to initialize Attr.MaxHealth / Attr.Health if missing.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Health")
 	float MaxHealth = 100.f;
 
@@ -25,33 +29,35 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FOnDied OnDied;
 
+	// Set current health (writes Attr.Health). Delta follows New-Old convention.
 	UFUNCTION(BlueprintCallable, Category="Health")
-	void SetHealth(float NewHealth)
-	{
-		const float Clamped = FMath::Clamp(NewHealth, 0.f, MaxHealth);
-		const float Delta = Clamped - CurrentHealth;
-		CurrentHealth = Clamped;
-		OnHealthChanged.Broadcast(CurrentHealth, Delta, nullptr);
-		if (CurrentHealth <= 0.f)
-		{
-			OnDied.Broadcast(nullptr);
-		}
-	}
+	void SetHealth(float NewHealth, AActor* InstigatorActor = nullptr);
+
+	// Damage is applied by modifying Attr.Health negatively. Returns true if applied.
+	UFUNCTION(BlueprintCallable, Category="Health")
+	bool ApplyDamage(float Amount, AActor* InstigatorActor);
+
+	// Optional convenience
+	UFUNCTION(BlueprintCallable, Category="Health")
+	float GetHealth() const { return CurrentHealth; }
 
 	UFUNCTION(BlueprintCallable, Category="Health")
-	bool ApplyDamage(float Amount, AActor* InstigatorActor)
-	{
-		if (Amount <= 0.f || CurrentHealth <= 0.f) return false;
+	float GetMaxHealth() const { return MaxHealth; }
 
-		const float Old = CurrentHealth;
-		CurrentHealth = FMath::Clamp(CurrentHealth - Amount, 0.f, MaxHealth);
+protected:
+	virtual void BeginPlay() override;
 
-		OnHealthChanged.Broadcast(CurrentHealth, CurrentHealth - Old, InstigatorActor);
+private:
+	UPROPERTY(Transient)
+	TObjectPtr<UAttributesComponent> Attributes = nullptr;
 
-		if (CurrentHealth <= 0.f)
-		{
-			OnDied.Broadcast(InstigatorActor);
-		}
-		return true;
-	}
+	bool bBoundToAttributes = false;
+	bool bHasDied = false;
+
+	void EnsureAttributes();
+
+	UFUNCTION()
+	void HandleAttributeChanged(FGameplayTag AttributeTag, float NewValue, float Delta, AActor* InstigatorActor);
+
+	void SyncFromAttributes(); // copies Attr.* into CurrentHealth/MaxHealth
 };

@@ -20,16 +20,15 @@ public:
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Action|Agent")
 	void GetOwnedGameplayTags(FGameplayTagContainer& OutTags) const;
 
-	// --- Turn resource (AP) ---
-	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Action|Agent")
-	bool HasActionPoints(int32 Amount) const;
+	// --- Generic Attributes (new) ---
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Action|Agent|Attributes")
+	bool HasAttribute(FGameplayTag AttributeTag) const;
 
-	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Action|Agent")
-	bool SpendActionPoints(int32 Amount);
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Action|Agent|Attributes")
+	float GetAttributeCurrentValue(FGameplayTag AttributeTag) const;
 
-	// --- Combat stats / effects hooks (you can implement however you want) ---
-	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Action|Agent")
-	bool ApplyDamage(float Amount, AActor* InstigatorActor);
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Action|Agent|Attributes")
+	bool ModifyAttributeCurrentValue(FGameplayTag AttributeTag, float Delta, AActor* InstigatorActor);
 
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Action|Agent")
 	bool AddStatusTag(const FGameplayTag& StatusTag, int32 Turns, float Seconds, AActor* InstigatorActor);

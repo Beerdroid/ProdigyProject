@@ -7,7 +7,7 @@ bool UActionEffect_DealDamage::Apply_Implementation(const FActionContext& Contex
 
 	if (Context.TargetActor->GetClass()->ImplementsInterface(UActionAgentInterface::StaticClass()))
 	{
-		return IActionAgentInterface::Execute_ApplyDamage(Context.TargetActor, Damage, Context.Instigator);
+		return false;
 	}
 
 	return false;

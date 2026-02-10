@@ -1,6 +1,8 @@
 ﻿#include "AbilitySystem/ActionComponent.h"
 #include "AbilitySystem/ActionAgentInterface.h"
+#include "AbilitySystem/AttributesComponent.h"
 #include "AbilitySystem/CombatSubsystem.h"
+#include "AbilitySystem/ProdigyGameplayTags.h"
 
 UActionComponent::UActionComponent()
 {
@@ -17,7 +19,26 @@ void UActionComponent::OnTurnBegan()
 {
 	if (!bInCombat) return;
 
-	// ✅ decrement at START of the actor's own turn
+	AActor* OwnerActor = GetOwner();
+	if (!IsValid(OwnerActor)) return;
+
+	// --- 1) Refresh AP from MaxAP (unified attributes model) ---
+	if (UAttributesComponent* Attrs = OwnerActor->FindComponentByClass<UAttributesComponent>())
+	{
+		const FGameplayTag APTag    = ProdigyTags::Attr::AP;
+		const FGameplayTag MaxAPTag = ProdigyTags::Attr::MaxAP;
+
+		// Only do it if both exist on this actor
+		if (Attrs->HasAttribute(APTag) && Attrs->HasAttribute(MaxAPTag))
+		{
+			const float NewAP = Attrs->GetCurrentValue(MaxAPTag);
+			Attrs->SetCurrentValue(APTag, NewAP, /*InstigatorActor*/ OwnerActor);
+
+			ACTION_LOG(Log, TEXT("OnTurnBegan: AP refreshed to %.0f (from MaxAP)"), NewAP);
+		}
+	}
+
+	// --- 2) Decrement combat cooldowns at start of owner's own turn ---
 	for (auto& KVP : Cooldowns)
 	{
 		FActionCooldownState& S = KVP.Value;
@@ -76,33 +97,6 @@ void UActionComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 	// - Combat cooldowns decrement on turn events (OnTurnBegan)
 }
 
-void UActionComponent::TickTurnCooldowns()
-{
-	for (auto& KVP : Cooldowns)
-	{
-		FActionCooldownState& S = KVP.Value;
-		if (S.TurnsRemaining > 0)
-		{
-			S.TurnsRemaining -= 1;
-		}
-	}
-}
-
-void UActionComponent::DecrementCombatCooldowns()
-{
-	for (auto& KVP : Cooldowns)
-	{
-		FActionCooldownState& S = KVP.Value;
-
-		if (S.TurnsRemaining > 0)
-		{
-			--S.TurnsRemaining;
-		}
-
-		// (Optional) If exploration timestamp exists, leave it alone here.
-		// S.CooldownEndTime is real-time; you likely tick that elsewhere when not in combat.
-	}
-}
 
 bool UActionComponent::PassesTagGates(AActor* Instigator, const UActionDefinition* Def,
                                       EActionFailReason& OutFail) const
@@ -231,8 +225,9 @@ FActionQueryResult UActionComponent::QueryAction(FGameplayTag ActionTag, const F
 				return R;
 			}
 
-			const bool bHasAP = IActionAgentInterface::Execute_HasActionPoints(Context.Instigator, R.APCost);
-			if (!bHasAP)
+			const FGameplayTag APTag = ProdigyTags::Attr::AP;
+			const float CurAP = IActionAgentInterface::Execute_GetAttributeCurrentValue(Context.Instigator, APTag);
+			if (CurAP < (float)R.APCost)
 			{
 				R.FailReason = EActionFailReason::InsufficientAP;
 				return R;
@@ -332,23 +327,25 @@ bool UActionComponent::ExecuteAction(FGameplayTag ActionTag, const FActionContex
 		           *GetNameSafe(Context.Instigator)
 		);
 
+		const FGameplayTag APTag = ProdigyTags::Attr::AP;
+
 		const bool bSpent =
-			IActionAgentInterface::Execute_SpendActionPoints(Context.Instigator, Q.APCost);
+			IActionAgentInterface::Execute_ModifyAttributeCurrentValue(
+				Context.Instigator,
+				APTag,
+				-(float)Q.APCost,
+				GetOwner()
+			);
 
 		if (!bSpent)
 		{
 			ACTION_LOG(Warning,
-			           TEXT("ExecuteAction FAIL: SpendAP failed (Cost=%d Instigator=%s)"),
-			           Q.APCost,
-			           *GetNameSafe(Context.Instigator)
+					   TEXT("ExecuteAction FAIL: ModifyAttributeCurrentValue failed (Cost=%d Instigator=%s)"),
+					   Q.APCost,
+					   *GetNameSafe(Context.Instigator)
 			);
 			return false;
 		}
-
-		ACTION_LOG(Log,
-		           TEXT("AP Spent: %d"),
-		           Q.APCost
-		);
 	}
 
 	// Apply effects

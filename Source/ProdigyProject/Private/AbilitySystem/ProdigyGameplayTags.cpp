@@ -54,3 +54,15 @@ namespace ProdigyTags::State
 	UE_DEFINE_GAMEPLAY_TAG(CombatLocked,  "State.CombatLocked");
 	UE_DEFINE_GAMEPLAY_TAG(InDialogue,    "State.InDialogue");
 }
+
+// =======================
+// ATTRIBUTE TAGS
+// =======================
+namespace ProdigyTags::Attr
+{
+	UE_DEFINE_GAMEPLAY_TAG(Health,    "Attr.Health");
+	UE_DEFINE_GAMEPLAY_TAG(MaxHealth, "Attr.MaxHealth");
+
+	UE_DEFINE_GAMEPLAY_TAG(AP,     "Attr.AP");
+	UE_DEFINE_GAMEPLAY_TAG(MaxAP,  "Attr.MaxAP");
+}

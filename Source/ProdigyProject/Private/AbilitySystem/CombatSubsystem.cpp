@@ -11,14 +11,6 @@ bool UCombatSubsystem::IsValidCombatant(AActor* A) const
 	return (A->FindComponentByClass<UActionComponent>() != nullptr);
 }
 
-static void TickEndOfTurnForActor(AActor* Actor)
-{
-	if (!IsValid(Actor)) return;
-	if (UActionComponent* AC = Actor->FindComponentByClass<UActionComponent>())
-	{
-		AC->OnTurnEnded();
-	}
-}
 
 void UCombatSubsystem::ExitCombat()
 {
@@ -221,9 +213,6 @@ void UCombatSubsystem::AdvanceTurn()
 
 	UE_LOG(LogActionExec, Warning, TEXT("[Combat] AdvanceTurn: BEFORE TurnIndex=%d Current=%s Participants=%d"),
 		TurnIndex, *GetNameSafe(CurrentActor), Participants.Num());
-
-	// ✅ Option A: end-of-turn tick for the actor that is finishing
-	TickEndOfTurnForActor(CurrentActor);
 
 	// now pick next
 	TurnIndex = (TurnIndex + 1) % Participants.Num();

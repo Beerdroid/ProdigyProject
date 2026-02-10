@@ -24,9 +24,6 @@ public:
 	UActionComponent* GetActionComponent() const;
 
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Combatant")
-	UTurnResourceComponent* GetTurnResource() const;
-
-	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Combatant")
 	UStatusComponent* GetStatusComponent() const;
 
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Combatant")
