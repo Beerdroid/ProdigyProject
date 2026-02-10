@@ -35,9 +35,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Action")
 	bool IsInCombat() const { return bInCombat; }
 
-	// Called by turn manager at the start of THIS actor's turn
-	UFUNCTION(BlueprintCallable, Category="Action")
-	void NotifyTurnBegan();
 
 	UFUNCTION(BlueprintCallable, Category="Action")
 	FActionQueryResult QueryAction(FGameplayTag ActionTag, const FActionContext& Context) const;
@@ -50,6 +47,8 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Actions|Combat")
 	void OnTurnBegan();
+
+	void OnTurnEnded();
 
 protected:
 	virtual void BeginPlay() override;
@@ -69,5 +68,7 @@ private:
 
 	void StartCooldown(const UActionDefinition* Def);
 	void TickTurnCooldowns();
+
+	void DecrementCombatCooldowns();
 };
 

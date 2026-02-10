@@ -11,6 +11,15 @@ bool UCombatSubsystem::IsValidCombatant(AActor* A) const
 	return (A->FindComponentByClass<UActionComponent>() != nullptr);
 }
 
+static void TickEndOfTurnForActor(AActor* Actor)
+{
+	if (!IsValid(Actor)) return;
+	if (UActionComponent* AC = Actor->FindComponentByClass<UActionComponent>())
+	{
+		AC->OnTurnEnded();
+	}
+}
+
 void UCombatSubsystem::ExitCombat()
 {
 	if (!bInCombat) return;
@@ -82,14 +91,8 @@ void UCombatSubsystem::EnterCombat(const TArray<AActor*>& InParticipants, AActor
 void UCombatSubsystem::BeginTurnForIndex(int32 Index)
 {
 	PruneParticipants();
-
-	bAdvancingTurn = false;
-	
 	if (Participants.Num() == 0) return;
 	if (!Participants.IsValidIndex(Index)) return;
-
-	Index = Index % Participants.Num();
-	TurnIndex = Index;
 
 	AActor* TurnActor = Participants[Index].Get();
 	if (!IsValid(TurnActor)) return;
@@ -97,13 +100,13 @@ void UCombatSubsystem::BeginTurnForIndex(int32 Index)
 	UE_LOG(LogActionExec, Warning, TEXT("[Combat] BeginTurn: Index=%d Actor=%s"),
 		Index, *GetNameSafe(TurnActor));
 
-	// decrement cooldowns / refresh AP
+	// ✅ only begin-turn work now (AP refresh etc.)
 	if (UActionComponent* AC = TurnActor->FindComponentByClass<UActionComponent>())
 	{
 		AC->OnTurnBegan();
 	}
 
-	// player turn => wait for input
+	// Player waits
 	APawn* PawnOwner = Cast<APawn>(TurnActor);
 	const bool bIsPlayer = PawnOwner && PawnOwner->IsPlayerControlled();
 	if (bIsPlayer)
@@ -213,14 +216,22 @@ void UCombatSubsystem::AdvanceTurn()
 
 	bAdvancingTurn = true;
 
-	UE_LOG(LogActionExec, Warning, TEXT("[Combat] AdvanceTurn: BEFORE TurnIndex=%d Current=%s Participants=%d"),
-		TurnIndex, *GetNameSafe(GetCurrentTurnActor()), Participants.Num());
+	// ✅ capture current BEFORE changing index
+	AActor* CurrentActor = GetCurrentTurnActor();
 
+	UE_LOG(LogActionExec, Warning, TEXT("[Combat] AdvanceTurn: BEFORE TurnIndex=%d Current=%s Participants=%d"),
+		TurnIndex, *GetNameSafe(CurrentActor), Participants.Num());
+
+	// ✅ Option A: end-of-turn tick for the actor that is finishing
+	TickEndOfTurnForActor(CurrentActor);
+
+	// now pick next
 	TurnIndex = (TurnIndex + 1) % Participants.Num();
 
 	UE_LOG(LogActionExec, Warning, TEXT("[Combat] AdvanceTurn: AFTER  TurnIndex=%d Next=%s"),
 		TurnIndex, *GetNameSafe(GetCurrentTurnActor()));
 
+	// begin next on next tick
 	if (UWorld* World = GetWorld())
 	{
 		const int32 IndexToBegin = TurnIndex;
@@ -232,6 +243,8 @@ void UCombatSubsystem::AdvanceTurn()
 	{
 		BeginTurnForIndex(TurnIndex);
 	}
+
+	bAdvancingTurn = false;
 }
 
 void UCombatSubsystem::HandleActionExecuted(FGameplayTag ActionTag, const FActionContext& Context)
@@ -249,61 +262,20 @@ void UCombatSubsystem::HandleActionExecuted(FGameplayTag ActionTag, const FActio
 		return;
 	}
 
-	AdvanceTurn();
+	AdvanceTurn(); 
 }
 
 bool UCombatSubsystem::EndCurrentTurn(AActor* Instigator)
 {
-	if (!bInCombat)
-	{
-		UE_LOG(LogActionExec, Verbose, TEXT("[Combat] EndCurrentTurn ignored: not in combat"));
-		return false;
-	}
-
-	if (!IsValid(Instigator))
-	{
-		UE_LOG(LogActionExec, Warning, TEXT("[Combat] EndCurrentTurn rejected: Instigator is invalid"));
-		return false;
-	}
-
-	PruneParticipants();
-	if (!bInCombat || Participants.Num() == 0)
-	{
-		UE_LOG(LogActionExec, Warning, TEXT("[Combat] EndCurrentTurn rejected: combat ended during prune"));
-		return false;
-	}
+	if (!bInCombat) return false;
+	if (!IsValid(Instigator)) return false;
 
 	AActor* Current = GetCurrentTurnActor();
-	if (!IsValid(Current))
-	{
-		UE_LOG(LogActionExec, Warning, TEXT("[Combat] EndCurrentTurn rejected: CurrentTurnActor invalid"));
-		return false;
-	}
-
-	// Must match exactly what Participants stores (typically Pawn)
-	if (Current != Instigator)
-	{
-		UE_LOG(LogActionExec, Warning,
-			TEXT("[Combat] EndCurrentTurn rejected: Instigator=%s Current=%s"),
-			*GetNameSafe(Instigator),
-			*GetNameSafe(Current));
-		return false;
-	}
-
-	// If a turn transition is already in-flight, don't start another one
-	if (bAdvancingTurn)
-	{
-		UE_LOG(LogActionExec, Verbose,
-			TEXT("[Combat] EndCurrentTurn ignored: already advancing (Current=%s)"),
-			*GetNameSafe(Current));
-		return false;
-	}
+	if (Current != Instigator) return false;
 
 	UE_LOG(LogActionExec, Warning, TEXT("[Combat] EndCurrentTurn: %s"), *GetNameSafe(Instigator));
 
-	// AdvanceTurn() will set bAdvancingTurn=true and schedule BeginTurnForIndex on next tick.
-	// Make sure BeginTurnForIndex resets bAdvancingTurn=false at the start.
-	AdvanceTurn();
+	AdvanceTurn(); // ✅ this will tick end-of-turn cooldowns for the instigator
 	return true;
 }
 

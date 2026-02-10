@@ -17,6 +17,7 @@ void UActionComponent::OnTurnBegan()
 {
 	if (!bInCombat) return;
 
+	// ✅ decrement at START of the actor's own turn
 	for (auto& KVP : Cooldowns)
 	{
 		FActionCooldownState& S = KVP.Value;
@@ -27,6 +28,11 @@ void UActionComponent::OnTurnBegan()
 	}
 
 	ACTION_LOG(Log, TEXT("OnTurnBegan: cooldown turns decremented"));
+}
+
+void UActionComponent::OnTurnEnded()
+{
+	ACTION_LOG(Log, TEXT("OnTurnEnded"));
 }
 
 void UActionComponent::BeginPlay()
@@ -59,12 +65,6 @@ void UActionComponent::SetInCombat(bool bNowInCombat)
 	bInCombat = bNowInCombat;
 }
 
-void UActionComponent::NotifyTurnBegan()
-{
-	// Only meaningful for combat turn-based cooldowns
-	if (!bInCombat) return;
-	TickTurnCooldowns();
-}
 
 void UActionComponent::TickComponent(float DeltaTime, ELevelTick TickType,
                                      FActorComponentTickFunction* ThisTickFunction)
@@ -85,6 +85,22 @@ void UActionComponent::TickTurnCooldowns()
 		{
 			S.TurnsRemaining -= 1;
 		}
+	}
+}
+
+void UActionComponent::DecrementCombatCooldowns()
+{
+	for (auto& KVP : Cooldowns)
+	{
+		FActionCooldownState& S = KVP.Value;
+
+		if (S.TurnsRemaining > 0)
+		{
+			--S.TurnsRemaining;
+		}
+
+		// (Optional) If exploration timestamp exists, leave it alone here.
+		// S.CooldownEndTime is real-time; you likely tick that elsewhere when not in combat.
 	}
 }
 
@@ -142,15 +158,6 @@ FActionQueryResult UActionComponent::QueryAction(FGameplayTag ActionTag, const F
 {
 	FActionQueryResult R;
 
-	UE_LOG(LogActionExec, Verbose,
-	       TEXT("[ActionComp:%s] Query OK Tag=%s Mode=%s APCost=%d CDTurns=%d CDSec=%.2f"),
-	       *GetNameSafe(GetOwner()),
-	       *ActionTag.ToString(),
-	       bInCombat ? TEXT("Combat") : TEXT("Exploration"),
-	       R.APCost,
-	       R.CooldownTurns,
-	       R.CooldownSeconds
-	);
 
 	const UActionDefinition* Def = FindDef(ActionTag);
 	if (!Def)
@@ -200,9 +207,9 @@ FActionQueryResult UActionComponent::QueryAction(FGameplayTag ActionTag, const F
 			R.CooldownSeconds = S->GetSecondsRemaining(Now);
 
 			ACTION_LOG(Log, TEXT("Query BLOCK Tag=%s Reason=Cooldown Turns=%d Sec=%.2f"),
-				*ActionTag.ToString(),
-				S->TurnsRemaining,
-				R.CooldownSeconds
+			           *ActionTag.ToString(),
+			           S->TurnsRemaining,
+			           R.CooldownSeconds
 			);
 
 			return R;
@@ -238,6 +245,17 @@ FActionQueryResult UActionComponent::QueryAction(FGameplayTag ActionTag, const F
 	}
 
 	R.bCanExecute = true;
+
+	UE_LOG(LogActionExec, Verbose,
+	       TEXT("[ActionComp:%s] Query OK Tag=%s Mode=%s APCost=%d CDTurns=%d CDSec=%.2f"),
+	       *GetNameSafe(GetOwner()),
+	       *ActionTag.ToString(),
+	       bInCombat ? TEXT("Combat") : TEXT("Exploration"),
+	       R.APCost,
+	       R.CooldownTurns,
+	       R.CooldownSeconds
+	);
+
 	return R;
 }
 
@@ -249,14 +267,15 @@ void UActionComponent::StartCooldown(const UActionDefinition* Def)
 
 	if (bInCombat)
 	{
+		const int32 Planned = FMath::Max(0, Def->Combat.CooldownTurns);
 		// Turn-based
-		S.TurnsRemaining = FMath::Max(0, Def->Combat.CooldownTurns);
+		S.TurnsRemaining = (Planned > 0) ? (Planned + 1) : 0;
 
 		// Clear realtime
 		S.CooldownEndTime = 0.f;
 
 		ACTION_LOG(Log, TEXT("StartCooldown Combat: Tag=%s Turns=%d"),
-			*Def->ActionTag.ToString(), S.TurnsRemaining);
+		           *Def->ActionTag.ToString(), S.TurnsRemaining);
 	}
 	else
 	{
@@ -268,7 +287,7 @@ void UActionComponent::StartCooldown(const UActionDefinition* Def)
 		S.TurnsRemaining = 0;
 
 		ACTION_LOG(Log, TEXT("StartCooldown Explore: Tag=%s End=%.2f (Now=%.2f, Sec=%.2f)"),
-			*Def->ActionTag.ToString(), S.CooldownEndTime, Now, Def->Exploration.CooldownSeconds);
+		           *Def->ActionTag.ToString(), S.CooldownEndTime, Now, Def->Exploration.CooldownSeconds);
 	}
 }
 
@@ -300,6 +319,7 @@ bool UActionComponent::ExecuteAction(FGameplayTag ActionTag, const FActionContex
 		           TEXT("ExecuteAction BLOCKED:  APCost=%d"),
 		           Q.APCost
 		);
+		
 		return false;
 	}
 
