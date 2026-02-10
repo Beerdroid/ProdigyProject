@@ -9,6 +9,7 @@
 #include "Quest/Interfaces/QuestInventoryProvider.h"
 #include "ProdigyPlayerController.generated.h"
 
+class UCombatSubsystem;
 class UQuestLogComponent;
 class UQuestIntegrationComponent;
 
@@ -37,16 +38,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Quest")
 	void NotifyQuestsInventoryChanged();
 
-	// Call this when your game credits a kill to this player (server).
 	UFUNCTION(BlueprintCallable, Category="Quest")
 	void NotifyQuestsKillTag(FGameplayTag TargetTag);
-
-	// Server entrypoint for BP (safe even if called on client).
-	UFUNCTION(Server, Reliable, BlueprintCallable, Category="Quest")
-	void Server_NotifyQuestsInventoryChanged();
-
-	UFUNCTION(Server, Reliable, BlueprintCallable, Category="Quest")
-	void Server_NotifyQuestsKillTag(FGameplayTag TargetTag);
 
 	UFUNCTION(BlueprintCallable, Category="Quest")
 	void ApplyQuests(FName QuestID);
@@ -83,6 +76,17 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Targeting")
 	FActionContext BuildActionContextFromLockedTarget() const;
+
+	UFUNCTION(BlueprintCallable, Category="Combat|Turn")
+	bool IsMyTurn() const;
+
+	UFUNCTION(BlueprintCallable, Category="Combat|Abilities")
+	bool TryUseAbilityOnLockedTarget(FGameplayTag AbilityTag);
+
+	UFUNCTION(BlueprintCallable, Category="Combat|Abilities")
+	void EndTurn();
+
+	UCombatSubsystem* GetCombatSubsystem() const;
 
 protected:
 	// Add in BP child if you prefer; these will auto-find if present.

@@ -1,5 +1,6 @@
 ﻿#include "AbilitySystem/ActionComponent.h"
 #include "AbilitySystem/ActionAgentInterface.h"
+#include "AbilitySystem/CombatSubsystem.h"
 
 UActionComponent::UActionComponent()
 {
@@ -14,16 +15,18 @@ void UActionComponent::OnRegister()
 
 void UActionComponent::OnTurnBegan()
 {
-	for (auto& It : Cooldowns)
+	if (!bInCombat) return;
+
+	for (auto& KVP : Cooldowns)
 	{
-		FActionCooldownState& S = It.Value;
+		FActionCooldownState& S = KVP.Value;
 		if (S.TurnsRemaining > 0)
 		{
-			S.TurnsRemaining--;
+			--S.TurnsRemaining;
 		}
 	}
 
-	ACTION_LOG(Log, TEXT("OnTurnBegan: cooldowns decremented"));
+	ACTION_LOG(Log, TEXT("OnTurnBegan: cooldown turns decremented"));
 }
 
 void UActionComponent::BeginPlay()
@@ -246,20 +249,26 @@ void UActionComponent::StartCooldown(const UActionDefinition* Def)
 
 	if (bInCombat)
 	{
-		S.TurnsRemaining = Def->Combat.CooldownTurns;
+		// Turn-based
+		S.TurnsRemaining = FMath::Max(0, Def->Combat.CooldownTurns);
+
+		// Clear realtime
 		S.CooldownEndTime = 0.f;
 
 		ACTION_LOG(Log, TEXT("StartCooldown Combat: Tag=%s Turns=%d"),
-		           *Def->ActionTag.ToString(), S.TurnsRemaining);
+			*Def->ActionTag.ToString(), S.TurnsRemaining);
 	}
 	else
 	{
+		// Realtime (absolute time)
 		const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
-		S.TurnsRemaining = 0;
-		S.CooldownEndTime = Now + Def->Exploration.CooldownSeconds;
+		S.CooldownEndTime = Now + FMath::Max(0.f, Def->Exploration.CooldownSeconds);
 
-		ACTION_LOG(Log, TEXT("StartCooldown Exploration: Tag=%s EndTime=%.2f (Now=%.2f)"),
-		           *Def->ActionTag.ToString(), S.CooldownEndTime, Now);
+		// Clear turn-based
+		S.TurnsRemaining = 0;
+
+		ACTION_LOG(Log, TEXT("StartCooldown Explore: Tag=%s End=%.2f (Now=%.2f, Sec=%.2f)"),
+			*Def->ActionTag.ToString(), S.CooldownEndTime, Now, Def->Exploration.CooldownSeconds);
 	}
 }
 
@@ -272,6 +281,7 @@ bool UActionComponent::ExecuteAction(FGameplayTag ActionTag, const FActionContex
 	           *GetNameSafe(Context.TargetActor),
 	           bInCombat ? 1 : 0
 	);
+
 
 	const UActionDefinition* Def = FindDef(ActionTag);
 	if (!Def)

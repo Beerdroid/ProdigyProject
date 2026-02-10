@@ -1,6 +1,8 @@
 #include "Player/ProdigyPlayerController.h"
 
+#include "AbilitySystem/ActionComponent.h"
 #include "AbilitySystem/ActionTypes.h"
+#include "AbilitySystem/CombatSubsystem.h"
 #include "Quest/QuestLogComponent.h"
 #include "Quest/Integration/QuestIntegrationComponent.h"
 #include "GameFramework/Actor.h"
@@ -61,31 +63,14 @@ void AProdigyPlayerController::CacheQuestComponents()
 
 void AProdigyPlayerController::NotifyQuestsInventoryChanged()
 {
-	// If we are already on server, call directly; otherwise route to server.
-	if (HasAuthority())
-	{
-		Server_NotifyQuestsInventoryChanged(); // safe even on server
-	}
-	else
-	{
-		Server_NotifyQuestsInventoryChanged();
-	}
+	QuestLog->NotifyInventoryChanged();
 }
 
 void AProdigyPlayerController::NotifyQuestsKillTag(FGameplayTag TargetTag)
 {
 	if (!TargetTag.IsValid())
 	{
-		return;
-	}
-
-	if (HasAuthority())
-	{
-		Server_NotifyQuestsKillTag(TargetTag);
-	}
-	else
-	{
-		Server_NotifyQuestsKillTag(TargetTag);
+		QuestLog->NotifyKillObjectiveTag(TargetTag);
 	}
 }
 
@@ -122,51 +107,6 @@ void AProdigyPlayerController::PrimaryInteract()
 		IInv_Interactable::Execute_Interact(InteractableComp, this, GetPawn());
 		return;
 	}
-}
-
-
-void AProdigyPlayerController::Server_NotifyQuestsInventoryChanged_Implementation()
-{
-	CacheQuestComponents();
-
-	if (!QuestLog)
-	{
-		return;
-	}
-
-	// This should be a server-only function on the QuestLog that recomputes collect objectives and advances stages.
-	QuestLog->NotifyInventoryChanged();
-}
-
-void AProdigyPlayerController::Server_NotifyQuestsKillTag_Implementation(FGameplayTag TargetTag)
-{
-	if (!TargetTag.IsValid())
-	{
-		return;
-	}
-
-	CacheQuestComponents();
-
-	if (!QuestLog)
-	{
-		return;
-	}
-
-	// You can expose a BlueprintCallable server function instead, but this is fine if your QuestLog uses this signature.
-	QuestLog->NotifyKillObjectiveTag(TargetTag);
-}
-
-void AProdigyPlayerController::SetLockedTarget(AActor* NewTarget)
-{
-	if (LockedTarget == NewTarget) return;
-
-	TARGET_LOG(Log,
-	TEXT("LockTarget -> %s"),
-	*GetNameSafe(NewTarget)
-);
-
-	LockedTarget = NewTarget;
-	OnTargetLocked.Broadcast(LockedTarget);
 }
 
 void AProdigyPlayerController::ClearLockedTarget()
@@ -246,10 +186,98 @@ bool AProdigyPlayerController::TryLockTarget(AActor* Candidate)
 	return true;
 }
 
+
+void AProdigyPlayerController::SetLockedTarget(AActor* NewTarget)
+{
+	if (LockedTarget == NewTarget) return;
+
+	TARGET_LOG(Log,
+	TEXT("LockTarget -> %s"),
+	*GetNameSafe(NewTarget)
+);
+
+	LockedTarget = NewTarget;
+	OnTargetLocked.Broadcast(LockedTarget);
+}
+
 FActionContext AProdigyPlayerController::BuildActionContextFromLockedTarget() const
 {
 	FActionContext Ctx;
 	Ctx.Instigator = GetPawn();
 	Ctx.TargetActor = LockedTarget;
 	return Ctx;
+}
+
+bool AProdigyPlayerController::IsMyTurn() const
+{
+	APawn* P = GetPawn();
+	if (!IsValid(P)) return false;
+
+	UCombatSubsystem* Combat = GetCombatSubsystem();
+	if (!Combat || !Combat->IsInCombat()) return true; // not in combat => allow
+
+	return Combat->GetCurrentTurnActor() == P;
+}
+
+bool AProdigyPlayerController::TryUseAbilityOnLockedTarget(FGameplayTag AbilityTag)
+{
+	APawn* P = GetPawn();
+	if (!IsValid(P)) return false;
+
+	UCombatSubsystem* Combat = GetCombatSubsystem();
+	if (!Combat) return false;
+
+	// Turn gate (only when in combat)
+	if (Combat->IsInCombat())
+	{
+		AActor* TurnActor = Combat->GetCurrentTurnActor();
+		if (TurnActor != P)
+		{
+			UE_LOG(LogActionExec, Warning,
+				TEXT("[PC:%s] Ability blocked: not your turn (Turn=%s)"),
+				*GetNameSafe(this), *GetNameSafe(TurnActor));
+			return false;
+		}
+	}
+
+	AActor* Target = LockedTarget.Get();
+	if (!IsValid(Target))
+	{
+		UE_LOG(LogActionExec, Warning, TEXT("[PC:%s] Ability blocked: no LockedTarget"), *GetNameSafe(this));
+		return false;
+	}
+
+	// Start combat only when you actually cast (not on select)
+	if (!Combat->IsInCombat())
+	{
+		TArray<AActor*> Parts;
+		Parts.Add(Target);
+		Parts.Add(P);
+		Combat->EnterCombat(Parts, /*FirstToAct*/ P);
+	}
+
+	UActionComponent* AC = P->FindComponentByClass<UActionComponent>();
+	if (!AC) return false;
+
+	FActionContext Ctx;
+	Ctx.Instigator = P;
+	Ctx.TargetActor = Target;
+
+	return AC->ExecuteAction(AbilityTag, Ctx);
+}
+
+void AProdigyPlayerController::EndTurn()
+{
+	if (!IsMyTurn()) return;
+
+	if (UCombatSubsystem* Combat = GetCombatSubsystem())
+	{
+		Combat->EndCurrentTurn(GetPawn());
+	}
+}
+
+UCombatSubsystem* AProdigyPlayerController::GetCombatSubsystem() const
+{
+	UGameInstance* GI = GetGameInstance();
+	return GI ? GI->GetSubsystem<UCombatSubsystem>() : nullptr;
 }
