@@ -27,9 +27,6 @@ public:
 	UStatusComponent* GetStatusComponent() const;
 
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Combatant")
-	UHealthComponent* GetHealthComponent() const;
-
-	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Combatant")
 	bool IsAlive() const;
 
 	// Optional hook for freeze/unfreeze (combat overlay)

@@ -2,7 +2,6 @@
 
 AActionAgentCharacter::AActionAgentCharacter()
 {
-	Health       = CreateDefaultSubobject<UHealthComponent>(TEXT("Health"));
 	Status       = CreateDefaultSubobject<UStatusComponent>(TEXT("Status"));
 	Attributes   = CreateDefaultSubobject<UAttributesComponent>(TEXT("Attributes"));
 }

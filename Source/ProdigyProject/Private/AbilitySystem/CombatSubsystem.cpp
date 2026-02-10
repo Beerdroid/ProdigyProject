@@ -1,14 +1,40 @@
 ﻿
 #include "AbilitySystem/CombatSubsystem.h"
 
+#include "AbilitySystem/ActionAgentInterface.h"
 #include "AbilitySystem/ActionComponent.h"
+#include "AbilitySystem/AttributesComponent.h"
+#include "AbilitySystem/ProdigyGameplayTags.h"
 
 bool UCombatSubsystem::IsValidCombatant(AActor* A) const
 {
 	if (!IsValid(A)) return false;
 
-	// TEMP: allow any actor with ActionComponent
-	return (A->FindComponentByClass<UActionComponent>() != nullptr);
+	if (!A->FindComponentByClass<UActionComponent>())
+	{
+		return false;
+	}
+
+	UAttributesComponent* Attrs = A->FindComponentByClass<UAttributesComponent>();
+	if (!Attrs)
+	{
+		UE_LOG(LogActionExec, Error, TEXT("[Combat] Invalid combatant %s: missing AttributesComponent"), *GetNameSafe(A));
+		return false;
+	}
+
+	const bool bOk =
+		Attrs->HasAttribute(ProdigyTags::Attr::Health) &&
+		Attrs->HasAttribute(ProdigyTags::Attr::MaxHealth) &&
+		Attrs->HasAttribute(ProdigyTags::Attr::AP) &&
+		Attrs->HasAttribute(ProdigyTags::Attr::MaxAP);
+
+	if (!bOk)
+	{
+		UE_LOG(LogActionExec, Error, TEXT("[Combat] Invalid combatant %s: missing required Attr.* tags in DefaultAttributes"), *GetNameSafe(A));
+		return false;
+	}
+
+	return true;
 }
 
 
@@ -268,12 +294,21 @@ bool UCombatSubsystem::EndCurrentTurn(AActor* Instigator)
 	return true;
 }
 
+static bool IsDeadByAttributes(AActor* A)
+{
+	if (!IsValid(A)) return true;
+	if (!A->GetClass()->ImplementsInterface(UActionAgentInterface::StaticClass())) return false;
+
+	const float HP = IActionAgentInterface::Execute_GetAttributeCurrentValue(A, ProdigyTags::Attr::Health);
+	return HP <= 0.f;
+}
+
 void UCombatSubsystem::PruneParticipants()
 {
 	Participants.RemoveAll([](const TWeakObjectPtr<AActor>& W)
 	{
 		AActor* A = W.Get();
-		return !IsValid(A) || A->IsActorBeingDestroyed();
+		return !IsValid(A) || A->IsActorBeingDestroyed() || IsDeadByAttributes(A);
 	});
 
 	if (Participants.Num() == 0)
@@ -285,3 +320,4 @@ void UCombatSubsystem::PruneParticipants()
 	// Keep index in range
 	TurnIndex = TurnIndex % Participants.Num();
 }
+

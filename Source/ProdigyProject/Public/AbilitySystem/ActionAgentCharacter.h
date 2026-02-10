@@ -5,7 +5,6 @@
 #include "GameplayTagContainer.h"
 
 #include "ActionAgentInterface.h"
-#include "HealthComponent.h"
 #include "StatusComponent.h"
 #include "AbilitySystem/AttributesComponent.h"
 
@@ -18,9 +17,6 @@ class PRODIGYPROJECT_API AActionAgentCharacter : public ACharacter, public IActi
 
 public:
 	AActionAgentCharacter();
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Action|Components")
-	TObjectPtr<UHealthComponent> Health;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Action|Components")
 	TObjectPtr<UStatusComponent> Status;

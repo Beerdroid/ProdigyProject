@@ -2,7 +2,6 @@
 #include "Character/CombatantCharacterBase.h"
 
 #include "AbilitySystem/ActionComponent.h"
-#include "AbilitySystem/HealthComponent.h"
 #include "AbilitySystem/StatusComponent.h"
 
 #include "GameFramework/CharacterMovementComponent.h"
@@ -11,14 +10,8 @@
 
 ACombatantCharacterBase::ACombatantCharacterBase()
 {
-	Health       = CreateDefaultSubobject<UHealthComponent>(TEXT("Health"));
 	Status       = CreateDefaultSubobject<UStatusComponent>(TEXT("Status"));
 	ActionComponent = CreateDefaultSubobject<UActionComponent>(TEXT("ActionComponent"));
-}
-
-bool ACombatantCharacterBase::IsAlive_Implementation() const
-{
-	return Health ? (Health->CurrentHealth > 0.f) : true;
 }
 
 void ACombatantCharacterBase::OnCombatFreeze_Implementation(bool bFrozen)

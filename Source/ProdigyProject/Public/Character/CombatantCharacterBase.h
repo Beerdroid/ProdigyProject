@@ -27,17 +27,12 @@ protected:
 	TObjectPtr<UActionComponent> ActionComponent = nullptr;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat|Components")
-	TObjectPtr<UHealthComponent> Health = nullptr;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat|Components")
 	TObjectPtr<UStatusComponent> Status = nullptr;
 
 public:
 	// ---- ICombatantInterface ----
 	virtual UActionComponent* GetActionComponent_Implementation() const override { return ActionComponent; }
 	virtual UStatusComponent* GetStatusComponent_Implementation() const override { return Status; }
-	virtual UHealthComponent* GetHealthComponent_Implementation() const override { return Health; }
-	virtual bool IsAlive_Implementation() const override;
 
 	virtual void OnCombatFreeze_Implementation(bool bFrozen) override;
 
