@@ -700,28 +700,31 @@ void AInvPlayerController::OnSetDestinationCompleted()
 	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
 	const float HeldSeconds = static_cast<float>(Now - PressStartTimeSeconds);
 
-	// short click -> MoveTo
-	if (!bBlockMoveThisClick && HeldSeconds < PressedThreshold)
+	// LMB always cancels any pending pickup intent (RMB could start it, etc.)
+	ClearPendingPickup();
+
+	// Hold -> Follow already handled in Triggered()
+	if (HeldSeconds >= PressedThreshold)
 	{
-		MoveTo(CachedDestination);
+		bBlockMoveThisClick = false;
+		return;
+	}
+
+	// Short click: try target lock first, otherwise move
+	AActor* Clicked = GetActorUnderCursorForClick();
+
+	if (HandlePrimaryClickActor(Clicked))
+	{
+		// click consumed by targeting; do NOT move
+		bBlockMoveThisClick = true;
+		StopMovement();
+		return;
 	}
 
 	bBlockMoveThisClick = false;
-
-	if (!bBlockMoveThisClick && HeldSeconds < PressedThreshold)
-	{
-		AActor* Clicked = GetActorUnderCursorForClick(); // plugin-local helper; no game deps
-		if (HandlePrimaryClickActor(Clicked))
-		{
-			bBlockMoveThisClick = true;
-		}
-
-		if (!bBlockMoveThisClick)
-		{
-			MoveTo(CachedDestination);
-		}
-	}
+	MoveTo(CachedDestination);
 }
+
 
 void AInvPlayerController::OnSetDestinationCanceled()
 {

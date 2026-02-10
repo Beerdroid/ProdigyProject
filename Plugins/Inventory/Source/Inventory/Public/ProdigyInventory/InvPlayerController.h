@@ -229,7 +229,7 @@ public:
 
 	virtual bool HandlePrimaryClickActor(AActor* ClickedActor) { return false; }
 
-	AActor* GetActorUnderCursorForClick() const;
+	virtual AActor* GetActorUnderCursorForClick() const;
 
 private:
 	UPROPERTY(EditDefaultsOnly, Category="Movement|FX")

@@ -83,19 +83,28 @@ void AProdigyPlayerController::ApplyQuests(FName QuestID)
 void AProdigyPlayerController::PrimaryInteract()
 {
 	UE_LOG(LogTemp, Warning, TEXT("PrimaryInteract fired"));
-	AActor* Target = GetHoveredActor(); // getter from base, or use ThisActor.Get() if protected
+
+	// Use hover (already computed by your trace timer in base)
+	AActor* Target = GetHoveredActor();
 	if (!IsValid(Target))
 	{
 		return;
 	}
 
-	// 1) Try pickup first (keeps old inventory behavior)
+	// 1) If it's a valid combat target, lock it (RMB select)
+	if (TryLockTarget(Target))
+	{
+		TARGET_LOG(Log, TEXT("PrimaryInteract consumed by target lock"));
+		return;
+	}
+
+	// 2) If it's an item, pick it up (or move to it + pickup)
 	if (TryPrimaryPickup(Target))
 	{
 		return;
 	}
 
-	// 2) Otherwise do generic interaction
+	// 3) Otherwise, generic interaction
 	if (Target->GetClass()->ImplementsInterface(UInv_Interactable::StaticClass()))
 	{
 		IInv_Interactable::Execute_Interact(Target, this, GetPawn());
@@ -280,4 +289,16 @@ UCombatSubsystem* AProdigyPlayerController::GetCombatSubsystem() const
 {
 	UGameInstance* GI = GetGameInstance();
 	return GI ? GI->GetSubsystem<UCombatSubsystem>() : nullptr;
+}
+
+AActor* AProdigyPlayerController::GetActorUnderCursorForClick() const
+{
+	FHitResult Hit;
+
+	// 1) Combat target trace first
+	const bool bHitTarget = GetHitResultUnderCursor(TargetTraceChannel, false, Hit);
+	if (bHitTarget && Hit.GetActor()) return Hit.GetActor();
+
+	// 2) Fallback to base behavior (interactables/items)
+	return Super::GetActorUnderCursorForClick();
 }

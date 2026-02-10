@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Player/Inv_PlayerController.h"
 #include "GameplayTagContainer.h"
+#include "AbilitySystem/ActionTypes.h"
 #include "ProdigyInventory/InvPlayerController.h"
 #include "Quest/Interfaces/QuestInventoryProvider.h"
 #include "ProdigyPlayerController.generated.h"
@@ -87,6 +88,8 @@ public:
 	void EndTurn();
 
 	UCombatSubsystem* GetCombatSubsystem() const;
+
+	virtual AActor* GetActorUnderCursorForClick() const override;
 
 protected:
 	// Add in BP child if you prefer; these will auto-find if present.
