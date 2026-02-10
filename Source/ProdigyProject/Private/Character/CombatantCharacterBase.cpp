@@ -12,6 +12,7 @@ ACombatantCharacterBase::ACombatantCharacterBase()
 {
 	Status       = CreateDefaultSubobject<UStatusComponent>(TEXT("Status"));
 	ActionComponent = CreateDefaultSubobject<UActionComponent>(TEXT("ActionComponent"));
+	Attributes = CreateDefaultSubobject<UAttributesComponent>(TEXT("Attributes"));
 }
 
 void ACombatantCharacterBase::OnCombatFreeze_Implementation(bool bFrozen)
@@ -66,4 +67,19 @@ bool ACombatantCharacterBase::AddStatusTag_Implementation(const FGameplayTag& St
 {
 	(void)InstigatorActor;
 	return Status ? Status->AddStatusTag(StatusTag, Turns, Seconds) : false;
+}
+
+bool ACombatantCharacterBase::HasAttribute_Implementation(FGameplayTag AttributeTag) const
+{
+	return IsValid(Attributes) ? Attributes->HasAttribute(AttributeTag) : false;
+}
+
+float ACombatantCharacterBase::GetAttributeCurrentValue_Implementation(FGameplayTag AttributeTag) const
+{
+	return IsValid(Attributes) ? Attributes->GetCurrentValue(AttributeTag) : 0.f;
+}
+
+bool ACombatantCharacterBase::ModifyAttributeCurrentValue_Implementation(FGameplayTag AttributeTag, float Delta, AActor* InstigatorActor)
+{
+	return IsValid(Attributes) ? Attributes->ModifyCurrentValue(AttributeTag, Delta, InstigatorActor) : false;
 }

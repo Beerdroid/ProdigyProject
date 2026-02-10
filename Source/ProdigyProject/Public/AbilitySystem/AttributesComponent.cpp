@@ -1,5 +1,7 @@
 ﻿#include "AbilitySystem/AttributesComponent.h"
 
+#include "ActionComponent.h"
+
 UAttributesComponent::UAttributesComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
@@ -114,6 +116,16 @@ bool UAttributesComponent::ModifyCurrentValue(FGameplayTag AttributeTag, float D
 
 	const float Old = E->CurrentValue;
 	E->CurrentValue = Old + Delta;
+
+	UE_LOG(LogActionExec, Warning,
+	TEXT("[Attr:%s] %s: %.2f -> %.2f (Delta=%.2f) Inst=%s"),
+	*GetNameSafe(GetOwner()),
+	*AttributeTag.ToString(),
+	Old,
+	E->CurrentValue,
+	Delta,
+	*GetNameSafe(InstigatorActor)
+);
 
 	BroadcastChanged(AttributeTag, Old, E->CurrentValue, InstigatorActor);
 	return true;

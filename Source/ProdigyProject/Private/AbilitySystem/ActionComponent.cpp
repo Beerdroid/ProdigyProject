@@ -2,6 +2,7 @@
 #include "AbilitySystem/ActionAgentInterface.h"
 #include "AbilitySystem/AttributesComponent.h"
 #include "AbilitySystem/CombatSubsystem.h"
+#include "AbilitySystem/ProdigyAbilityUtils.h"
 #include "AbilitySystem/ProdigyGameplayTags.h"
 
 UActionComponent::UActionComponent()
@@ -22,19 +23,40 @@ void UActionComponent::OnTurnBegan()
 	AActor* OwnerActor = GetOwner();
 	if (!IsValid(OwnerActor)) return;
 
-	// --- 1) Refresh AP from MaxAP (unified attributes model) ---
-	if (UAttributesComponent* Attrs = OwnerActor->FindComponentByClass<UAttributesComponent>())
+	// --- 1) Refresh AP from MaxAP (authoritative attributes) ---
+	const FGameplayTag APTag    = ProdigyTags::Attr::AP;
+	const FGameplayTag MaxAPTag = ProdigyTags::Attr::MaxAP;
+
+	if (!OwnerActor->GetClass()->ImplementsInterface(UActionAgentInterface::StaticClass()))
 	{
-		const FGameplayTag APTag    = ProdigyTags::Attr::AP;
-		const FGameplayTag MaxAPTag = ProdigyTags::Attr::MaxAP;
+		ACTION_LOG(Error, TEXT("OnTurnBegan: Owner missing ActionAgentInterface -> cannot refresh AP"));
+	}
+	else
+	{
+		const bool bHasAP    = IActionAgentInterface::Execute_HasAttribute(OwnerActor, APTag);
+		const bool bHasMaxAP = IActionAgentInterface::Execute_HasAttribute(OwnerActor, MaxAPTag);
 
-		// Only do it if both exist on this actor
-		if (Attrs->HasAttribute(APTag) && Attrs->HasAttribute(MaxAPTag))
+		if (!bHasAP || !bHasMaxAP)
 		{
-			const float NewAP = Attrs->GetCurrentValue(MaxAPTag);
-			Attrs->SetCurrentValue(APTag, NewAP, /*InstigatorActor*/ OwnerActor);
+			ACTION_LOG(Error, TEXT("OnTurnBegan: missing Attr.AP or Attr.MaxAP in DefaultAttributes"));
+		}
+		else
+		{
+			const float OldAP = IActionAgentInterface::Execute_GetAttributeCurrentValue(OwnerActor, APTag);
+			const float NewAP = IActionAgentInterface::Execute_GetAttributeCurrentValue(OwnerActor, MaxAPTag);
 
-			ACTION_LOG(Log, TEXT("OnTurnBegan: AP refreshed to %.0f (from MaxAP)"), NewAP);
+			// Set AP = MaxAP explicitly (delta form keeps attribute broadcast consistent)
+			const float Delta = NewAP - OldAP;
+			const bool bOk = IActionAgentInterface::Execute_ModifyAttributeCurrentValue(OwnerActor, APTag, Delta, OwnerActor);
+
+			if (!bOk)
+			{
+				ACTION_LOG(Error, TEXT("OnTurnBegan: failed to refresh AP (modify returned false)"));
+			}
+			else
+			{
+				ACTION_LOG(Log, TEXT("OnTurnBegan: AP refresh %.0f -> %.0f"), OldAP, NewAP);
+			}
 		}
 	}
 
@@ -137,12 +159,23 @@ bool UActionComponent::IsTargetValid(const UActionDefinition* Def, const FAction
 	{
 	case EActionTargetingMode::None:
 		return true;
+
 	case EActionTargetingMode::Self:
-		return Context.Instigator != nullptr;
+		return IsValid(Context.Instigator);
+
 	case EActionTargetingMode::Unit:
-		return Context.TargetActor != nullptr;
+		if (!IsValid(Context.TargetActor)) return false;
+
+		// ✅ dead units are not valid targets (still selectable for loot, but actions can't execute)
+		if (ProdigyAbilityUtils::IsDeadByAttributes(Context.TargetActor))
+		{
+			return false;
+		}
+		return true;
+
 	case EActionTargetingMode::Point:
-		return !Context.TargetLocation.IsNearlyZero(); // you can relax this later
+		return !Context.TargetLocation.IsNearlyZero();
+
 	default:
 		return false;
 	}
@@ -263,8 +296,7 @@ void UActionComponent::StartCooldown(const UActionDefinition* Def)
 	if (bInCombat)
 	{
 		const int32 Planned = FMath::Max(0, Def->Combat.CooldownTurns);
-		// Turn-based
-		S.TurnsRemaining = (Planned > 0) ? (Planned + 1) : 0;
+		S.TurnsRemaining = Planned;
 
 		// Clear realtime
 		S.CooldownEndTime = 0.f;
@@ -310,10 +342,11 @@ bool UActionComponent::ExecuteAction(FGameplayTag ActionTag, const FActionContex
 	const FActionQueryResult Q = QueryAction(ActionTag, Context);
 	if (!Q.bCanExecute)
 	{
-		ACTION_LOG(Log,
-		           TEXT("ExecuteAction BLOCKED:  APCost=%d"),
-		           Q.APCost
-		);
+		const UEnum* Enum = StaticEnum<EActionFailReason>();
+		const FString ReasonStr = Enum ? Enum->GetNameStringByValue((int64)Q.FailReason) : TEXT("Unknown");
+
+		ACTION_LOG(Log, TEXT("ExecuteAction BLOCKED: Reason=%s APCost=%d CDTurns=%d CDSec=%.2f"),
+			*ReasonStr, Q.APCost, Q.CooldownTurns, Q.CooldownSeconds);
 		
 		return false;
 	}

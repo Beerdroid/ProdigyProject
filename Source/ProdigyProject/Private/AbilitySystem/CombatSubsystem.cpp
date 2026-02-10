@@ -4,6 +4,7 @@
 #include "AbilitySystem/ActionAgentInterface.h"
 #include "AbilitySystem/ActionComponent.h"
 #include "AbilitySystem/AttributesComponent.h"
+#include "AbilitySystem/ProdigyAbilityUtils.h"
 #include "AbilitySystem/ProdigyGameplayTags.h"
 
 bool UCombatSubsystem::IsValidCombatant(AActor* A) const
@@ -15,22 +16,28 @@ bool UCombatSubsystem::IsValidCombatant(AActor* A) const
 		return false;
 	}
 
-	UAttributesComponent* Attrs = A->FindComponentByClass<UAttributesComponent>();
-	if (!Attrs)
+	if (ProdigyAbilityUtils::IsDeadByAttributes(A)) return false;
+
+	if (!A->GetClass()->ImplementsInterface(UActionAgentInterface::StaticClass()))
 	{
-		UE_LOG(LogActionExec, Error, TEXT("[Combat] Invalid combatant %s: missing AttributesComponent"), *GetNameSafe(A));
+		UE_LOG(LogActionExec, Error, TEXT("[Combat] Invalid combatant %s: missing ActionAgentInterface"), *GetNameSafe(A));
 		return false;
 	}
 
-	const bool bOk =
-		Attrs->HasAttribute(ProdigyTags::Attr::Health) &&
-		Attrs->HasAttribute(ProdigyTags::Attr::MaxHealth) &&
-		Attrs->HasAttribute(ProdigyTags::Attr::AP) &&
-		Attrs->HasAttribute(ProdigyTags::Attr::MaxAP);
+	const bool bHasHealth =
+		IActionAgentInterface::Execute_HasAttribute(A, ProdigyTags::Attr::Health) &&
+		IActionAgentInterface::Execute_HasAttribute(A, ProdigyTags::Attr::MaxHealth);
 
-	if (!bOk)
+	const bool bHasAP =
+		IActionAgentInterface::Execute_HasAttribute(A, ProdigyTags::Attr::AP) &&
+		IActionAgentInterface::Execute_HasAttribute(A, ProdigyTags::Attr::MaxAP);
+
+	if (!bHasHealth || !bHasAP)
 	{
-		UE_LOG(LogActionExec, Error, TEXT("[Combat] Invalid combatant %s: missing required Attr.* tags in DefaultAttributes"), *GetNameSafe(A));
+		UE_LOG(LogActionExec, Error,
+			TEXT("[Combat] Invalid combatant %s: missing required Attr tags (need Health/MaxHealth/AP/MaxAP in DefaultAttributes)"),
+			*GetNameSafe(A)
+		);
 		return false;
 	}
 
@@ -63,23 +70,43 @@ void UCombatSubsystem::ExitCombat()
 
 void UCombatSubsystem::EnterCombat(const TArray<AActor*>& InParticipants, AActor* FirstToAct)
 {
+	// If we're already in combat, ignore
 	if (bInCombat) return;
 
-	bInCombat = true;
-	bAdvancingTurn = false;
-	Participants.Reset();
+	// Build a filtered list first (do NOT flip bInCombat yet)
+	TArray<TWeakObjectPtr<AActor>> NewParticipants;
+	NewParticipants.Reserve(InParticipants.Num());
 
 	for (AActor* A : InParticipants)
 	{
 		if (!IsValidCombatant(A)) continue;
+		NewParticipants.Add(A);
+	}
 
-		Participants.Add(A);
+	// ✅ No combat if we don't have at least 2 combatants
+	if (NewParticipants.Num() < 2)
+	{
+		UE_LOG(LogActionExec, Warning,
+			TEXT("[Combat] EnterCombat ABORTED: ValidParticipants=%d (need >= 2). FirstToAct=%s"),
+			NewParticipants.Num(), *GetNameSafe(FirstToAct));
+		return;
+	}
+
+	// Now we can enter combat
+	bInCombat = true;
+	bAdvancingTurn = false;
+
+	Participants = MoveTemp(NewParticipants);
+
+	for (TWeakObjectPtr<AActor>& W : Participants)
+	{
+		AActor* A = W.Get();
+		if (!IsValid(A)) continue;
 
 		if (UActionComponent* AC = A->FindComponentByClass<UActionComponent>())
 		{
 			AC->SetInCombat(true);
 
-			// Avoid duplicate binds
 			AC->OnActionExecuted.RemoveDynamic(this, &UCombatSubsystem::HandleActionExecuted);
 			AC->OnActionExecuted.AddDynamic(this, &UCombatSubsystem::HandleActionExecuted);
 		}
@@ -92,15 +119,16 @@ void UCombatSubsystem::EnterCombat(const TArray<AActor*>& InParticipants, AActor
 	}
 
 	UE_LOG(LogActionExec, Warning, TEXT("[Combat] EnterCombat: Participants=%d FirstToAct=%s TurnIndex=%d"),
-	Participants.Num(), *GetNameSafe(FirstToAct), TurnIndex);
+		Participants.Num(), *GetNameSafe(FirstToAct), TurnIndex);
 
 	for (int32 i = 0; i < Participants.Num(); ++i)
 	{
+		AActor* P = Participants[i].Get();
 		UE_LOG(LogActionExec, Warning, TEXT("[Combat]  P[%d]=%s Valid=%d HasActionComp=%d"),
 			i,
-			*GetNameSafe(Participants[i].Get()),
-			IsValid(Participants[i].Get()),
-			IsValid(Participants[i].Get()) && Participants[i]->FindComponentByClass<UActionComponent>() != nullptr);
+			*GetNameSafe(P),
+			IsValid(P),
+			IsValid(P) && P->FindComponentByClass<UActionComponent>() != nullptr);
 	}
 
 	BeginTurnForIndex(TurnIndex);
@@ -109,6 +137,8 @@ void UCombatSubsystem::EnterCombat(const TArray<AActor*>& InParticipants, AActor
 void UCombatSubsystem::BeginTurnForIndex(int32 Index)
 {
 	PruneParticipants();
+	if (!bInCombat) return;
+	
 	if (Participants.Num() == 0) return;
 	if (!Participants.IsValidIndex(Index)) return;
 
@@ -140,7 +170,7 @@ void UCombatSubsystem::BeginTurnForIndex(int32 Index)
 	for (const TWeakObjectPtr<AActor>& W : Participants)
 	{
 		AActor* A = W.Get();
-		if (IsValid(A) && A != TurnActor)
+		if (IsValid(A) && A != TurnActor && !ProdigyAbilityUtils::IsDeadByAttributes(A))
 		{
 			Target = A;
 			break;
@@ -224,6 +254,8 @@ void UCombatSubsystem::AdvanceTurn()
 	if (!bInCombat) return;
 
 	PruneParticipants();
+
+	if (!bInCombat) return;
 	if (Participants.Num() == 0) return;
 
 	if (bAdvancingTurn)
@@ -290,17 +322,9 @@ bool UCombatSubsystem::EndCurrentTurn(AActor* Instigator)
 
 	UE_LOG(LogActionExec, Warning, TEXT("[Combat] EndCurrentTurn: %s"), *GetNameSafe(Instigator));
 
-	AdvanceTurn(); // ✅ this will tick end-of-turn cooldowns for the instigator
+	AdvanceTurn();
+	
 	return true;
-}
-
-static bool IsDeadByAttributes(AActor* A)
-{
-	if (!IsValid(A)) return true;
-	if (!A->GetClass()->ImplementsInterface(UActionAgentInterface::StaticClass())) return false;
-
-	const float HP = IActionAgentInterface::Execute_GetAttributeCurrentValue(A, ProdigyTags::Attr::Health);
-	return HP <= 0.f;
 }
 
 void UCombatSubsystem::PruneParticipants()
@@ -308,10 +332,11 @@ void UCombatSubsystem::PruneParticipants()
 	Participants.RemoveAll([](const TWeakObjectPtr<AActor>& W)
 	{
 		AActor* A = W.Get();
-		return !IsValid(A) || A->IsActorBeingDestroyed() || IsDeadByAttributes(A);
+		return !IsValid(A) || A->IsActorBeingDestroyed() || ProdigyAbilityUtils::IsDeadByAttributes(A);
 	});
 
-	if (Participants.Num() == 0)
+	// ✅ End combat when there is nobody to fight (0) OR only one survivor (1)
+	if (Participants.Num() <= 1)
 	{
 		ExitCombat();
 		return;

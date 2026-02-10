@@ -5,13 +5,12 @@
 #include "GameplayTagContainer.h"
 
 #include "AbilitySystem/ActionAgentInterface.h"
+#include "AbilitySystem/AttributesComponent.h"
 #include "Interfaces/CombatantInterface.h"
 
 #include "CombatantCharacterBase.generated.h"
 
 class UActionComponent;
-class UTurnResourceComponent;
-class UHealthComponent;
 class UStatusComponent;
 
 UCLASS()
@@ -29,6 +28,9 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat|Components")
 	TObjectPtr<UStatusComponent> Status = nullptr;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat|Components")
+	TObjectPtr<UAttributesComponent> Attributes = nullptr;
+
 public:
 	// ---- ICombatantInterface ----
 	virtual UActionComponent* GetActionComponent_Implementation() const override { return ActionComponent; }
@@ -39,4 +41,8 @@ public:
 	// ---- IActionAgentInterface ----
 	virtual void GetOwnedGameplayTags_Implementation(FGameplayTagContainer& OutTags) const override;
 	virtual bool AddStatusTag_Implementation(const FGameplayTag& StatusTag, int32 Turns, float Seconds, AActor* InstigatorActor) override;
+
+	virtual bool HasAttribute_Implementation(FGameplayTag AttributeTag) const override;
+	virtual float GetAttributeCurrentValue_Implementation(FGameplayTag AttributeTag) const override;
+	virtual bool ModifyAttributeCurrentValue_Implementation(FGameplayTag AttributeTag, float Delta, AActor* InstigatorActor) override;
 };
