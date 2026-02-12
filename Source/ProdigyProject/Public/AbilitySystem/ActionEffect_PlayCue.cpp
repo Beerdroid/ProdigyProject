@@ -1,6 +1,6 @@
 ﻿#include "AbilitySystem/ActionEffect_PlayCue.h"
 
-#include "AbilitySystem/CombatCueSubsystem.h"
+#include "ActionCueSubsystem.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogCueEffect, Log, All);
 
@@ -24,12 +24,36 @@ bool UActionEffect_PlayCue::Apply_Implementation(const FActionContext& Context) 
 		return false;
 	}
 
-	UCombatCueSubsystem* Subsys = World->GetSubsystem<UCombatCueSubsystem>();
+	UActionCueSubsystem* Subsys = World->GetSubsystem<UActionCueSubsystem>();
 	if (!Subsys)
 	{
-		UE_LOG(LogCueEffect, Error, TEXT("PlayCue effect failed: missing CombatCueSubsystem (CueTag=%s)"), *CueTag.ToString());
+		UE_LOG(LogCueEffect, Error, TEXT("PlayCue effect failed: missing ActionCueSubsystem (CueTag=%s)"), *CueTag.ToString());
 		return false;
 	}
 
-	return Subsys->ExecuteCue(CueTag, Context, DefaultAnchor);
+	// Bridge old context -> new cue context (no renames to FActionContext)
+	FActionCueContext Ctx;
+	Ctx.InstigatorActor = Context.Instigator;
+	Ctx.TargetActor     = Context.TargetActor;
+
+	// Prefer explicit TargetLocation if set; else fall back to TargetActor location; else zero.
+	if (!Context.TargetLocation.IsNearlyZero())
+	{
+		Ctx.Location = Context.TargetLocation;
+	}
+	else if (IsValid(Context.TargetActor))
+	{
+		Ctx.Location = Context.TargetActor->GetActorLocation();
+	}
+	else
+	{
+		Ctx.Location = FVector::ZeroVector;
+	}
+
+	// If your FActionCueContext has OptionalSubTarget, keep it.
+	// If it doesn't, remove this line.
+	Ctx.OptionalSubTarget = Context.OptionalSubTarget;
+
+	Subsys->PlayCue(CueTag, Ctx);
+	return true;
 }

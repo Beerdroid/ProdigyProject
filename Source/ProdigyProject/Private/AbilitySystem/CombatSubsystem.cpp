@@ -1,8 +1,8 @@
-﻿
-#include "AbilitySystem/CombatSubsystem.h"
+﻿#include "AbilitySystem/CombatSubsystem.h"
 
 #include "AbilitySystem/ActionAgentInterface.h"
 #include "AbilitySystem/ActionComponent.h"
+#include "AbilitySystem/ActionCueSubsystem.h"
 #include "AbilitySystem/AttributesComponent.h"
 #include "AbilitySystem/ProdigyAbilityUtils.h"
 #include "AbilitySystem/ProdigyGameplayTags.h"
@@ -20,7 +20,8 @@ bool UCombatSubsystem::IsValidCombatant(AActor* A) const
 
 	if (!A->GetClass()->ImplementsInterface(UActionAgentInterface::StaticClass()))
 	{
-		UE_LOG(LogActionExec, Error, TEXT("[Combat] Invalid combatant %s: missing ActionAgentInterface"), *GetNameSafe(A));
+		UE_LOG(LogActionExec, Error, TEXT("[Combat] Invalid combatant %s: missing ActionAgentInterface"),
+		       *GetNameSafe(A));
 		return false;
 	}
 
@@ -35,8 +36,10 @@ bool UCombatSubsystem::IsValidCombatant(AActor* A) const
 	if (!bHasHealth || !bHasAP)
 	{
 		UE_LOG(LogActionExec, Error,
-			TEXT("[Combat] Invalid combatant %s: missing required Attr tags (need Health/MaxHealth/AP/MaxAP in DefaultAttributes)"),
-			*GetNameSafe(A)
+		       TEXT(
+			       "[Combat] Invalid combatant %s: missing required Attr tags (need Health/MaxHealth/AP/MaxAP in DefaultAttributes)"
+		       ),
+		       *GetNameSafe(A)
 		);
 		return false;
 	}
@@ -48,6 +51,13 @@ bool UCombatSubsystem::IsValidCombatant(AActor* A) const
 void UCombatSubsystem::ExitCombat()
 {
 	if (!bInCombat) return;
+
+	CancelScheduledBeginTurn();
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(TimerHandle_AITakeAction);
+	}
 
 	// Unbind + reset combat flags
 	for (TWeakObjectPtr<AActor>& W : Participants)
@@ -87,10 +97,11 @@ void UCombatSubsystem::EnterCombat(const TArray<AActor*>& InParticipants, AActor
 	if (NewParticipants.Num() < 2)
 	{
 		UE_LOG(LogActionExec, Warning,
-			TEXT("[Combat] EnterCombat ABORTED: ValidParticipants=%d (need >= 2). FirstToAct=%s"),
-			NewParticipants.Num(), *GetNameSafe(FirstToAct));
+		       TEXT("[Combat] EnterCombat ABORTED: ValidParticipants=%d (need >= 2). FirstToAct=%s"),
+		       NewParticipants.Num(), *GetNameSafe(FirstToAct));
 		return;
 	}
+
 
 	// Now we can enter combat
 	bInCombat = true;
@@ -119,26 +130,35 @@ void UCombatSubsystem::EnterCombat(const TArray<AActor*>& InParticipants, AActor
 	}
 
 	UE_LOG(LogActionExec, Warning, TEXT("[Combat] EnterCombat: Participants=%d FirstToAct=%s TurnIndex=%d"),
-		Participants.Num(), *GetNameSafe(FirstToAct), TurnIndex);
+	       Participants.Num(), *GetNameSafe(FirstToAct), TurnIndex);
 
 	for (int32 i = 0; i < Participants.Num(); ++i)
 	{
 		AActor* P = Participants[i].Get();
 		UE_LOG(LogActionExec, Warning, TEXT("[Combat]  P[%d]=%s Valid=%d HasActionComp=%d"),
-			i,
-			*GetNameSafe(P),
-			IsValid(P),
-			IsValid(P) && P->FindComponentByClass<UActionComponent>() != nullptr);
+		       i,
+		       *GetNameSafe(P),
+		       IsValid(P),
+		       IsValid(P) && P->FindComponentByClass<UActionComponent>() != nullptr);
 	}
 
-	BeginTurnForIndex(TurnIndex);
+
+	ScheduleBeginTurnForIndex(TurnIndex, EnterCombatDelaySeconds);
+
+	if (UActionCueSubsystem* Cues = GetWorld()->GetSubsystem<UActionCueSubsystem>())
+	{
+		FActionCueContext Ctx;
+		Ctx.InstigatorActor = FirstToAct;
+		Ctx.TargetActor = nullptr;
+		Cues->PlayCue(ActionCueTags::Cue_Combat_Enter, Ctx);
+	}
 }
 
 void UCombatSubsystem::BeginTurnForIndex(int32 Index)
 {
 	PruneParticipants();
 	if (!bInCombat) return;
-	
+
 	if (Participants.Num() == 0) return;
 	if (!Participants.IsValidIndex(Index)) return;
 
@@ -146,7 +166,7 @@ void UCombatSubsystem::BeginTurnForIndex(int32 Index)
 	if (!IsValid(TurnActor)) return;
 
 	UE_LOG(LogActionExec, Warning, TEXT("[Combat] BeginTurn: Index=%d Actor=%s"),
-		Index, *GetNameSafe(TurnActor));
+	       Index, *GetNameSafe(TurnActor));
 
 	// ✅ only begin-turn work now (AP refresh etc.)
 	if (UActionComponent* AC = TurnActor->FindComponentByClass<UActionComponent>())
@@ -196,17 +216,32 @@ void UCombatSubsystem::BeginTurnForIndex(int32 Index)
 	Ctx.Instigator = TurnActor;
 	Ctx.TargetActor = Target;
 
-	// Execute on next tick to avoid re-entrancy during BeginTurn / delegate callbacks
+	// Execute after an optional AI delay (and still avoid re-entrancy)
 	if (UWorld* World = GetWorld())
 	{
+		// Cancel any pending AI action from previous state
+		World->GetTimerManager().ClearTimer(TimerHandle_AITakeAction);
+
+		const float Delay = FMath::Max(0.f, AITakeActionDelaySeconds);
+
 		const TWeakObjectPtr<UCombatSubsystem> SelfWeak(this);
 		const TWeakObjectPtr<UActionComponent> ACWeak(AC);
 		const TWeakObjectPtr<AActor> TurnWeak(TurnActor);
 		const TWeakObjectPtr<AActor> TargetWeak(Target);
 
-		World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateLambda([SelfWeak, ACWeak, TurnWeak, TargetWeak, Ctx]()
+		// IMPORTANT: capture a *fresh* context that uses the chosen target
+		FActionContext LocalCtx = Ctx;
+
+		FTimerDelegate D = FTimerDelegate::CreateLambda([SelfWeak, ACWeak, TurnWeak, TargetWeak, LocalCtx]()
 		{
 			if (!SelfWeak.IsValid()) return;
+
+			// If combat ended while waiting
+			if (!SelfWeak->IsInCombat())
+			{
+				return;
+			}
+
 			if (!ACWeak.IsValid() || !TurnWeak.IsValid() || !TargetWeak.IsValid())
 			{
 				SelfWeak->AdvanceTurn();
@@ -220,17 +255,30 @@ void UCombatSubsystem::BeginTurnForIndex(int32 Index)
 			}
 
 			const FGameplayTag AttackTag = FGameplayTag::RequestGameplayTag(FName("Action.Attack.Basic"));
-			const bool bOk = ACWeak->ExecuteAction(AttackTag, Ctx);
+			const bool bOk = ACWeak->ExecuteAction(AttackTag, LocalCtx);
 
 			// If blocked (cooldown / AP / invalid), PASS TURN so combat never stalls.
 			if (!bOk)
 			{
 				UE_LOG(LogActionExec, Warning, TEXT("[Combat] AI action failed -> passing turn (%s)"),
-					*GetNameSafe(TurnWeak.Get()));
+				       *GetNameSafe(TurnWeak.Get()));
 				SelfWeak->AdvanceTurn();
 			}
 			// If succeeded, HandleActionExecuted will AdvanceTurn() normally.
-		}));
+		});
+
+		if (Delay <= 0.f)
+		{
+			// still avoid re-entrancy (next tick)
+			World->GetTimerManager().SetTimerForNextTick(D);
+		}
+		else
+		{
+			World->GetTimerManager().SetTimer(TimerHandle_AITakeAction, D, Delay, false);
+
+			UE_LOG(LogActionExec, Warning, TEXT("[Combat] AI scheduled: Actor=%s Delay=%.2f"),
+			       *GetNameSafe(TurnActor), Delay);
+		}
 	}
 	else
 	{
@@ -270,26 +318,16 @@ void UCombatSubsystem::AdvanceTurn()
 	AActor* CurrentActor = GetCurrentTurnActor();
 
 	UE_LOG(LogActionExec, Warning, TEXT("[Combat] AdvanceTurn: BEFORE TurnIndex=%d Current=%s Participants=%d"),
-		TurnIndex, *GetNameSafe(CurrentActor), Participants.Num());
+	       TurnIndex, *GetNameSafe(CurrentActor), Participants.Num());
 
 	// now pick next
 	TurnIndex = (TurnIndex + 1) % Participants.Num();
 
 	UE_LOG(LogActionExec, Warning, TEXT("[Combat] AdvanceTurn: AFTER  TurnIndex=%d Next=%s"),
-		TurnIndex, *GetNameSafe(GetCurrentTurnActor()));
+	       TurnIndex, *GetNameSafe(GetCurrentTurnActor()));
 
 	// begin next on next tick
-	if (UWorld* World = GetWorld())
-	{
-		const int32 IndexToBegin = TurnIndex;
-		World->GetTimerManager().SetTimerForNextTick(
-			FTimerDelegate::CreateUObject(this, &UCombatSubsystem::BeginTurnForIndex, IndexToBegin)
-		);
-	}
-	else
-	{
-		BeginTurnForIndex(TurnIndex);
-	}
+	ScheduleBeginTurnForIndex(TurnIndex, BetweenTurnsDelaySeconds);
 
 	bAdvancingTurn = false;
 }
@@ -304,12 +342,12 @@ void UCombatSubsystem::HandleActionExecuted(FGameplayTag ActionTag, const FActio
 	if (Context.Instigator != Current)
 	{
 		UE_LOG(LogActionExec, Verbose,
-			TEXT("[Combat] Ignoring ActionExecuted (not current turn): Inst=%s Current=%s"),
-			*GetNameSafe(Context.Instigator), *GetNameSafe(Current));
+		       TEXT("[Combat] Ignoring ActionExecuted (not current turn): Inst=%s Current=%s"),
+		       *GetNameSafe(Context.Instigator), *GetNameSafe(Current));
 		return;
 	}
 
-	AdvanceTurn(); 
+	AdvanceTurn();
 }
 
 bool UCombatSubsystem::EndCurrentTurn(AActor* Instigator)
@@ -323,7 +361,7 @@ bool UCombatSubsystem::EndCurrentTurn(AActor* Instigator)
 	UE_LOG(LogActionExec, Warning, TEXT("[Combat] EndCurrentTurn: %s"), *GetNameSafe(Instigator));
 
 	AdvanceTurn();
-	
+
 	return true;
 }
 
@@ -342,7 +380,87 @@ void UCombatSubsystem::PruneParticipants()
 		return;
 	}
 
-	// Keep index in range
 	TurnIndex = TurnIndex % Participants.Num();
+
+	// Keep index in range
+	if (PendingTurnIndex != INDEX_NONE)
+	{
+		PendingTurnIndex = PendingTurnIndex % Participants.Num();
+	}
 }
 
+
+void UCombatSubsystem::CancelScheduledBeginTurn()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(TimerHandle_BeginTurn);
+	}
+	bTurnBeginScheduled = false;
+	PendingTurnIndex = INDEX_NONE;
+}
+
+void UCombatSubsystem::ScheduleBeginTurnForIndex(int32 Index, float DelaySeconds)
+{
+	if (!bInCombat) return;
+
+	PruneParticipants();
+	if (!bInCombat) return; // Prune may ExitCombat
+	if (Participants.Num() == 0) return;
+
+	Index = Index % Participants.Num();
+
+	CancelScheduledBeginTurn();
+
+	PendingTurnIndex = Index;
+	bTurnBeginScheduled = true;
+
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	const float Delay = FMath::Max(0.f, DelaySeconds);
+
+	if (Delay <= 0.f)
+	{
+		HandleScheduledBeginTurn();
+		return;
+	}
+
+	UE_LOG(LogActionExec, Warning, TEXT("[Combat] ScheduleBeginTurn: Index=%d Delay=%.2f"), Index, Delay);
+
+	World->GetTimerManager().SetTimer(
+		TimerHandle_BeginTurn,
+		this,
+		&UCombatSubsystem::HandleScheduledBeginTurn,
+		Delay,
+		false
+	);
+}
+
+void UCombatSubsystem::HandleScheduledBeginTurn()
+{
+	UE_LOG(LogActionExec, Warning, TEXT("[Combat] HandleScheduledBeginTurn: Pending=%d"), PendingTurnIndex);
+
+	bTurnBeginScheduled = false;
+
+	if (!bInCombat) return;
+
+	PruneParticipants();
+	if (!bInCombat) return;
+	if (Participants.Num() == 0) return;
+
+	if (PendingTurnIndex == INDEX_NONE)
+	{
+		// Fallback – keep current
+		PendingTurnIndex = TurnIndex % Participants.Num();
+	}
+	else
+	{
+		PendingTurnIndex = PendingTurnIndex % Participants.Num();
+	}
+
+	TurnIndex = PendingTurnIndex;
+	PendingTurnIndex = INDEX_NONE;
+
+	BeginTurnForIndex(TurnIndex);
+}

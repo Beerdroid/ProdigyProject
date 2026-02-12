@@ -66,3 +66,17 @@ namespace ProdigyTags::Attr
 	UE_DEFINE_GAMEPLAY_TAG(AP,     "Attr.AP");
 	UE_DEFINE_GAMEPLAY_TAG(MaxAP,  "Attr.MaxAP");
 }
+
+
+
+// =======================
+// CUE TAGS
+// =======================
+UE_DEFINE_GAMEPLAY_TAG(ActionCueTags::Cue_Combat_Enter,   "Cue.Combat.Enter");
+UE_DEFINE_GAMEPLAY_TAG(ActionCueTags::Cue_Combat_Exit,    "Cue.Combat.Exit");
+
+UE_DEFINE_GAMEPLAY_TAG(ActionCueTags::Cue_Target_Lock,    "Cue.Target.Lock");
+UE_DEFINE_GAMEPLAY_TAG(ActionCueTags::Cue_Target_Invalid, "Cue.Target.Invalid");
+
+UE_DEFINE_GAMEPLAY_TAG(ActionCueTags::Cue_Action_Hit,     "Cue.Action.Hit");
+UE_DEFINE_GAMEPLAY_TAG(ActionCueTags::Cue_Action_Miss,    "Cue.Action.Miss");

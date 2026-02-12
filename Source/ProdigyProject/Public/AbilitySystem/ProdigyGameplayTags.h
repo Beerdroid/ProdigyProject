@@ -69,3 +69,19 @@ namespace ProdigyTags::Attr
 	UE_DECLARE_GAMEPLAY_TAG_EXTERN(AP);
 	UE_DECLARE_GAMEPLAY_TAG_EXTERN(MaxAP);
 }
+
+namespace ActionCueTags
+{
+	// Combat
+	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Cue_Combat_Enter);
+	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Cue_Combat_Exit);
+
+	// Targeting
+	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Cue_Target_Lock);
+	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Cue_Target_Invalid);
+
+	// Actions
+	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Cue_Action_Hit);
+	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Cue_Action_Miss);
+
+}

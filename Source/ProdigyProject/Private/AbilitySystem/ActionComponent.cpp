@@ -1,5 +1,6 @@
 ﻿#include "AbilitySystem/ActionComponent.h"
 #include "AbilitySystem/ActionAgentInterface.h"
+#include "AbilitySystem/ActionCueLibrary.h"
 #include "AbilitySystem/AttributesComponent.h"
 #include "AbilitySystem/CombatSubsystem.h"
 #include "AbilitySystem/ProdigyAbilityUtils.h"
@@ -209,6 +210,9 @@ FActionQueryResult UActionComponent::QueryAction(FGameplayTag ActionTag, const F
 	if (!R.bTargetValid)
 	{
 		R.FailReason = EActionFailReason::InvalidTarget;
+
+		UActionCueLibrary::PlayInvalidTargetCue(GetWorld(), GetOwner());
+		
 		return R;
 	}
 
