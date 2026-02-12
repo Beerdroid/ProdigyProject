@@ -8,6 +8,8 @@
 
 class UActionCueSet;
 
+DECLARE_LOG_CATEGORY_EXTERN(LogActionCue, Log, All);
+
 USTRUCT(BlueprintType)
 struct FActionCueContext
 {

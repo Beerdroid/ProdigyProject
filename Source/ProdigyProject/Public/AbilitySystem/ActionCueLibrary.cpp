@@ -7,8 +7,6 @@
 #include "NiagaraFunctionLibrary.h"
 #include "ProdigyGameplayTags.h"
 
-DEFINE_LOG_CATEGORY_STATIC(LogActionCue, Log, All);
-
 static UActionCueSubsystem* GetCueSubsystem(UObject* WorldContextObject)
 {
 	if (!WorldContextObject)
@@ -17,10 +15,16 @@ static UActionCueSubsystem* GetCueSubsystem(UObject* WorldContextObject)
 		return nullptr;
 	}
 
-	UWorld* World = WorldContextObject->GetWorld();
+	if (!GEngine)
+	{
+		UE_LOG(LogActionCue, Error, TEXT("GetCueSubsystem: GEngine is NULL"));
+		return nullptr;
+	}
+
+	UWorld* World = GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::LogAndReturnNull);
 	if (!World)
 	{
-		UE_LOG(LogActionCue, Error, TEXT("GetCueSubsystem: GetWorld() is NULL for %s (Class=%s)"),
+		UE_LOG(LogActionCue, Error, TEXT("GetCueSubsystem: World is NULL for %s (Class=%s)"),
 			*GetNameSafe(WorldContextObject),
 			*GetNameSafe(WorldContextObject->GetClass()));
 		return nullptr;
@@ -31,7 +35,10 @@ static UActionCueSubsystem* GetCueSubsystem(UObject* WorldContextObject)
 		(int32)World->GetNetMode());
 
 	UActionCueSubsystem* Sub = World->GetSubsystem<UActionCueSubsystem>();
-	UE_LOG(LogActionCue, Warning, TEXT("GetCueSubsystem: Subsystem=%s"), *GetNameSafe(Sub));
+
+	// This was Warning before; make it Verbose to avoid constant spam
+	UE_LOG(LogActionCue, Verbose, TEXT("GetCueSubsystem: Subsystem=%s"), *GetNameSafe(Sub));
+
 	return Sub;
 }
 
@@ -42,16 +49,14 @@ void UActionCueLibrary::PlayHitCue(
 	float Damage,
 	const FVector& OptionalWorldLocation)
 {
-	UE_LOG(LogActionCue, Warning, TEXT("UActionCueLibrary PlayHitCue start"));
-	UActionCueSubsystem* Cues = GetCueSubsystem(WorldContextObject);
-	if (!Cues) return;
-
-	UE_LOG(LogActionCue, Warning, TEXT("UActionCueLibrary Cues found"));
-
+	// Validate first (avoid subsystem lookup + logs on no-op)
 	if (!IsValid(TargetActor)) return;
 	if (Damage <= 0.f) return;
 
-	UE_LOG(LogActionCue, Warning, TEXT("UActionCueLibrary before FActionCueContext"));
+	UE_LOG(LogActionCue, Verbose, TEXT("UActionCueLibrary PlayHitCue start"));
+
+	UActionCueSubsystem* Cues = GetCueSubsystem(WorldContextObject);
+	if (!Cues) return;
 
 	FActionCueContext Ctx;
 	Ctx.InstigatorActor = InstigatorActor;
@@ -60,15 +65,12 @@ void UActionCueLibrary::PlayHitCue(
 		? TargetActor->GetActorLocation()
 		: OptionalWorldLocation;
 
-	UE_LOG(LogActionCue, Warning, TEXT("[HitCue] Inst=%s Target=%s Damage=%.1f"),
-	*GetNameSafe(InstigatorActor),
-	*GetNameSafe(TargetActor),
-	Damage);
+	UE_LOG(LogActionCue, Verbose, TEXT("[HitCue] Inst=%s Target=%s Damage=%.1f"),
+		*GetNameSafe(InstigatorActor),
+		*GetNameSafe(TargetActor),
+		Damage);
 
-	// If you need damage for selection rules later, add it to Ctx (only if it already exists).
 	Cues->PlayCue(ActionCueTags::Cue_Action_Hit, Ctx);
-	
-	UE_LOG(LogActionCue, Warning, TEXT("UActionCueLibrary PlayHitCue AFTER PlayCue"));
 }
 
 void UActionCueLibrary::PlayEnterCombatCue(UObject* WorldContextObject, AActor* FocusActor)
@@ -104,8 +106,8 @@ void UActionCueLibrary::PlayInvalidTargetCue(UObject* WorldContextObject, AActor
 
 	FActionCueContext Ctx;
 	Ctx.InstigatorActor = FocusActor;
-	Ctx.TargetActor = FocusActor;
-	Ctx.Location = FVector::ZeroVector;
+	Ctx.TargetActor = nullptr;
+	Ctx.Location = IsValid(FocusActor) ? FocusActor->GetActorLocation() : FVector::ZeroVector;
 
 	Cues->PlayCue(ActionCueTags::Cue_Target_Invalid, Ctx);
 }

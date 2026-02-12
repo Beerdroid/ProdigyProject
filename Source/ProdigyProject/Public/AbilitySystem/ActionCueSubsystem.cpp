@@ -6,10 +6,11 @@
 
 #include "Kismet/GameplayStatics.h"
 #include "NiagaraFunctionLibrary.h"
+#include "ProdigyAbilityUtils.h"
 #include "Sound/SoundBase.h"
 #include "Components/SceneComponent.h"
 
-DEFINE_LOG_CATEGORY_STATIC(LogActionCue, Log, All);
+DEFINE_LOG_CATEGORY(LogActionCue);
 
 static FRotator ResolveCueRotation(const FActionCueDef& Def, AActor* TargetActor, AActor* InstigatorActor, const FVector& Loc)
 {
@@ -63,9 +64,17 @@ void UActionCueSubsystem::PopActionOverrideCueSet()
 void UActionCueSubsystem::PlayCue(const FGameplayTag& CueTag, const FActionCueContext& Ctx)
 {
 	UE_LOG(LogActionCue, Warning, TEXT("[Cue] PlayCue start"));
+
 	if (!CueTag.IsValid())
 	{
 		UE_LOG(LogActionCue, Warning, TEXT("[Cue] PlayCue called with INVALID tag"));
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogActionCue, Error, TEXT("[Cue] PlayCue aborted: GetWorld() is NULL (Tag=%s)"), *CueTag.ToString());
 		return;
 	}
 
@@ -76,8 +85,6 @@ void UActionCueSubsystem::PlayCue(const FGameplayTag& CueTag, const FActionCueCo
 		*GetNameSafe(Ctx.TargetActor),
 		Ctx.Location.X, Ctx.Location.Y, Ctx.Location.Z);
 
-	// Optional filter: only block when the cue actually cares about a target.
-	// If you want EnterCombat/ExitCombat to always play, don't block when TargetActor is null.
 	if (IsValid(Ctx.TargetActor) && !IsAttackableTarget(Ctx))
 	{
 		UE_LOG(LogActionCue, Warning,
@@ -104,16 +111,10 @@ void UActionCueSubsystem::PlayCue(const FGameplayTag& CueTag, const FActionCueCo
 		return;
 	}
 
-	// Resolve where the cue should be played
 	AActor* LocActor = ResolveLocationActor(Def, Ctx);
 	const FVector Loc = ResolveLocation(Def, Ctx);
-	const FRotator Rot = ResolveCueRotation(
-		Def,
-		Ctx.TargetActor,
-		Ctx.InstigatorActor,
-		Loc);
+	const FRotator Rot = ResolveCueRotation(Def, Ctx.TargetActor, Ctx.InstigatorActor, Loc);
 
-	// Resolve attachment target (the actor we actually attach to)
 	USceneComponent* AttachComp = LocActor ? ResolveAttachComponent(LocActor) : nullptr;
 
 	UE_LOG(LogActionCue, Warning,
@@ -136,7 +137,6 @@ void UActionCueSubsystem::PlayCue(const FGameplayTag& CueTag, const FActionCueCo
 			*CueTag.ToString(),
 			*GetNameSafe(Def.VFX),
 			bCanAttach ? 1 : 0);
-		
 
 		if (bCanAttach)
 		{
@@ -153,7 +153,7 @@ void UActionCueSubsystem::PlayCue(const FGameplayTag& CueTag, const FActionCueCo
 		else
 		{
 			UNiagaraFunctionLibrary::SpawnSystemAtLocation(
-				GetWorld(),
+				World,
 				Def.VFX,
 				Loc,
 				Rot
@@ -190,7 +190,7 @@ void UActionCueSubsystem::PlayCue(const FGameplayTag& CueTag, const FActionCueCo
 		else
 		{
 			UGameplayStatics::PlaySoundAtLocation(
-				GetWorld(),
+				World,
 				Def.Sound,
 				Loc
 			);
@@ -202,10 +202,10 @@ void UActionCueSubsystem::PlayCue(const FGameplayTag& CueTag, const FActionCueCo
 	}
 
 	MarkPlayed(CueTag, Def, Ctx);
-	
 
 	UE_LOG(LogActionCue, Warning, TEXT("[Cue] PlayCue END Tag=%s"), *CueTag.ToString());
 }
+
 
 bool UActionCueSubsystem::ResolveCue(const FGameplayTag& CueTag, const FActionCueContext& Ctx, FActionCueDef& OutDef) const
 {
@@ -263,42 +263,56 @@ bool UActionCueSubsystem::ResolveCue(const FGameplayTag& CueTag, const FActionCu
 
 uint64 UActionCueSubsystem::MakeCooldownKey(const FGameplayTag& CueTag, const FActionCueDef& Def, const FActionCueContext& Ctx) const
 {
-    // Cheap stable key:
-    // tag hash + (optional instigator ptr)
-    const uint32 TagHash = GetTypeHash(CueTag);
+	const uint32 TagHash = GetTypeHash(CueTag);
+	uint64 Key = (uint64)TagHash;
 
-    uint64 Key = (uint64)TagHash;
+	if (Def.bCooldownPerInstigator && IsValid(Ctx.InstigatorActor))
+	{
+		// Use UObject identity rather than raw pointer bits
+		const uint32 InstId = (uint32)Ctx.InstigatorActor->GetUniqueID();
 
-    if (Def.bCooldownPerInstigator && IsValid(Ctx.InstigatorActor))
-    {
-        // fold pointer bits in
-        const uint64 Ptr = (uint64)reinterpret_cast<uintptr_t>(Ctx.InstigatorActor.Get());
-        Key ^= (Ptr + 0x9e3779b97f4a7c15ULL + (Key << 6) + (Key >> 2));
-    }
+		// 64-bit mix (same structure you used before, but with stable id)
+		const uint64 V = (uint64)InstId;
+		Key ^= (V + 0x9e3779b97f4a7c15ULL + (Key << 6) + (Key >> 2));
+	}
 
-    return Key;
+	return Key;
 }
 
 bool UActionCueSubsystem::PassesCooldown(const FGameplayTag& CueTag, const FActionCueDef& Def, const FActionCueContext& Ctx) const
 {
-    if (Def.CooldownSeconds <= 0.f) return true;
+	if (Def.CooldownSeconds <= 0.f) return true;
 
-    const double Now = GetWorld()->GetTimeSeconds();
-    const uint64 Key = MakeCooldownKey(CueTag, Def, Ctx);
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogActionCue, Error, TEXT("[Cue] PassesCooldown: GetWorld() is NULL (Tag=%s)"), *CueTag.ToString());
+		return false;
+	}
 
-    if (const double* Last = LastPlayedTimeByKey.Find(Key))
-    {
-        return (Now - *Last) >= (double)Def.CooldownSeconds;
-    }
-    return true;
+	const double Now = World->GetTimeSeconds();
+	const uint64 Key = MakeCooldownKey(CueTag, Def, Ctx);
+
+	if (const double* Last = LastPlayedTimeByKey.Find(Key))
+	{
+		return (Now - *Last) >= (double)Def.CooldownSeconds;
+	}
+	return true;
 }
 
 void UActionCueSubsystem::MarkPlayed(const FGameplayTag& CueTag, const FActionCueDef& Def, const FActionCueContext& Ctx) const
 {
-    if (Def.CooldownSeconds <= 0.f) return;
+	if (Def.CooldownSeconds <= 0.f) return;
 
-    const uint64 Key = MakeCooldownKey(CueTag, Def, Ctx);
-    LastPlayedTimeByKey.FindOrAdd(Key) = GetWorld()->GetTimeSeconds();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogActionCue, Error, TEXT("[Cue] MarkPlayed: GetWorld() is NULL (Tag=%s)"), *CueTag.ToString());
+		return;
+	}
+
+	const uint64 Key = MakeCooldownKey(CueTag, Def, Ctx);
+	LastPlayedTimeByKey.FindOrAdd(Key) = World->GetTimeSeconds();
 }
 
 AActor* UActionCueSubsystem::ResolveLocationActor(const FActionCueDef& Def, const FActionCueContext& Ctx) const
@@ -342,15 +356,12 @@ USceneComponent* UActionCueSubsystem::ResolveAttachComponent(AActor* A) const
 
 bool UActionCueSubsystem::IsAttackableTarget(const FActionCueContext& Ctx) const
 {
-    // If no target: allow cues that don’t depend on target (you can change this policy)
-    if (!IsValid(Ctx.TargetActor)) return true;
+	if (!IsValid(Ctx.TargetActor)) return true;
 
-    // Your combat code already has IsDeadByAttributes(A).
-    // Call it here if available. For now, we only guard “being destroyed”.
-    if (Ctx.TargetActor->IsActorBeingDestroyed()) return false;
+	if (Ctx.TargetActor->IsActorBeingDestroyed()) return false;
 
-    // TODO: wire your real dead check:
-    // if (IsDeadByAttributes(Ctx.TargetActor)) return false;
+	// Align with action/combat validity rules
+	if (ProdigyAbilityUtils::IsDeadByAttributes(Ctx.TargetActor)) return false;
 
-    return true;
+	return true;
 }

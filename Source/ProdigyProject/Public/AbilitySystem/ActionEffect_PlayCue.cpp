@@ -51,7 +51,6 @@ bool UActionEffect_PlayCue::Apply_Implementation(const FActionContext& Context) 
 	}
 
 	// If your FActionCueContext has OptionalSubTarget, keep it.
-	// If it doesn't, remove this line.
 	Ctx.OptionalSubTarget = Context.OptionalSubTarget;
 
 	Subsys->PlayCue(CueTag, Ctx);

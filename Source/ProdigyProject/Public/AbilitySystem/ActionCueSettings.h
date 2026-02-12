@@ -14,7 +14,4 @@ public:
 	// Global fallback cues
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category="Cues")
 	TSoftObjectPtr<UActionCueSet> GlobalCueSet;
-
-	UPROPERTY(EditAnywhere, Config, Category="Cues")
-	bool bEnableCues = true;
 };
