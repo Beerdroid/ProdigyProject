@@ -1,5 +1,6 @@
 ﻿#include "InventoryWidgetBase.h"
 
+#include "EquipSlotWidget.h"
 #include "Components/UniformGridPanel.h"
 #include "GridSlotWidget.h"
 #include "InvContextMenuWidget.h"
@@ -77,12 +78,19 @@ void UInventoryWidgetBase::SetInventory(UInventoryComponent* InInventory)
 		return;
 	}
 
+
+
 	// Bind delegates
 	Inventory->OnSlotsChanged.AddDynamic(this, &UInventoryWidgetBase::HandleSlotsChanged);
 	Inventory->OnSlotChanged.AddDynamic(this, &UInventoryWidgetBase::HandleSlotChanged);
 
 	AInvPlayerController* PC = GetOwningPlayer<AInvPlayerController>();
 	CachedPC = PC;
+
+	InitEquipSlot(EquipSlot_Head,  Inventory.Get());
+	InitEquipSlot(EquipSlot_Chest, Inventory.Get());
+	InitEquipSlot(EquipSlot_Weapon, Inventory.Get());
+	InitEquipSlot(EquipSlot_Cloak, Inventory.Get());
 
 	if (IsValid(PC))
 	{
@@ -128,6 +136,14 @@ void UInventoryWidgetBase::Unbind()
 		Grid->ClearChildren();
 	}
 	SlotWidgets.Reset();
+}
+
+void UInventoryWidgetBase::InitEquipSlot(UEquipSlotWidget* Slot, UInventoryComponent* Inv)
+{
+	if (!IsValid(Slot)) return;
+	if (!IsValid(Inv)) return;
+
+	Slot->SetInventory(Inv);
 }
 
 void UInventoryWidgetBase::ShowTooltipForView(const FInventorySlotView& View)

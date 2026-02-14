@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "CoreMinimal.h"
+#include "GameplayTagContainer.h"
 #include "Blueprint/DragDropOperation.h"
 #include "InvDragDropOp.generated.h"
 
@@ -22,6 +23,12 @@ public:
 	int32 Quantity = -1; // -1 = "all"
 
 	UPROPERTY(BlueprintReadOnly) bool bDropHandled = false;
+
+	UPROPERTY(BlueprintReadOnly)
+	bool bFromEquipSlot = false;
+
+	UPROPERTY(BlueprintReadOnly)
+	FGameplayTag SourceEquipSlotTag;
 
 protected:
 	virtual void DragCancelled_Implementation(const FPointerEvent& PointerEvent) override;
