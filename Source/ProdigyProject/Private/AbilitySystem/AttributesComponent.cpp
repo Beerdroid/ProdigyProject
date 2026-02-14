@@ -1,6 +1,6 @@
 ﻿#include "AbilitySystem/AttributesComponent.h"
 
-#include "ActionComponent.h"
+#include "AbilitySystem/ActionComponent.h"
 
 UAttributesComponent::UAttributesComponent()
 {

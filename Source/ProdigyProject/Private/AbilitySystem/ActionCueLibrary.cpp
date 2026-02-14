@@ -1,11 +1,11 @@
-﻿#include "ActionCueLibrary.h"
+﻿#include "AbilitySystem/ActionCueLibrary.h"
 
-#include "ActionCueSubsystem.h"
+#include "AbilitySystem/ActionCueSubsystem.h"
 
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "NiagaraFunctionLibrary.h"
-#include "ProdigyGameplayTags.h"
+#include "AbilitySystem/ProdigyGameplayTags.h"
 
 static UActionCueSubsystem* GetCueSubsystem(UObject* WorldContextObject)
 {
@@ -110,4 +110,32 @@ void UActionCueLibrary::PlayInvalidTargetCue(UObject* WorldContextObject, AActor
 	Ctx.Location = IsValid(FocusActor) ? FocusActor->GetActorLocation() : FVector::ZeroVector;
 
 	Cues->PlayCue(ActionCueTags::Cue_Target_Invalid, Ctx);
+}
+
+void UActionCueLibrary::PlayHitCue_Layered(
+	UObject* WorldContextObject,
+	AActor* TargetActor,
+	AActor* InstigatorActor,
+	float Damage,
+	const FVector& OptionalWorldLocation,
+	FGameplayTag WeaponTag,
+	FGameplayTag SurfaceTag)
+{
+	UActionCueSubsystem* Cues = GetCueSubsystem(WorldContextObject);
+	if (!Cues) return;
+
+	if (!IsValid(TargetActor)) return;
+	if (Damage <= 0.f) return;
+
+	FActionCueContext Ctx;
+	Ctx.InstigatorActor = InstigatorActor;
+	Ctx.TargetActor = TargetActor;
+	Ctx.Location = OptionalWorldLocation.IsNearlyZero()
+		? TargetActor->GetActorLocation()
+		: OptionalWorldLocation;
+
+	Ctx.WeaponTag = WeaponTag;
+	Ctx.SurfaceTag = SurfaceTag;
+
+	Cues->PlayCue(ActionCueTags::Cue_Action_Hit, Ctx);
 }

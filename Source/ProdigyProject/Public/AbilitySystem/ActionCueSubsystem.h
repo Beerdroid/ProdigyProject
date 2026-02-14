@@ -31,6 +31,12 @@ struct FActionCueContext
     // Optional tag for variants (headshot, weakspot, etc.)
     UPROPERTY(BlueprintReadWrite)
     FGameplayTag OptionalSubTarget;
+
+    UPROPERTY(BlueprintReadWrite)
+    FGameplayTag WeaponTag;
+
+    UPROPERTY(BlueprintReadWrite)
+    FGameplayTag SurfaceTag;
 };
 
 UCLASS()
@@ -69,4 +75,6 @@ private:
 
     // Filtering dead targets etc. (you’ll wire IsDeadByAttributes below)
     bool IsAttackableTarget(const FActionCueContext& Ctx) const;
+
+    UActionCueSet* ResolveCueSet(const FGameplayTag& CueTag, const FActionCueContext& Ctx) const;
 };

@@ -23,5 +23,22 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Damage")
 	bool bClampMinZero = true;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Cue")
+	bool bPlayHitCue = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Cue")
+	FGameplayTag WeaponTagForCue;
+
+	// Optional: attempt to detect physical surface via trace at damage time
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Cue")
+	bool bResolveSurfaceTypeByTrace = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Cue")
+	TEnumAsByte<ECollisionChannel> SurfaceTraceChannel = ECC_Visibility;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Cue")
+	float SurfaceTraceDistanceExtra = 50.f;
+
 	virtual bool Apply_Implementation(const FActionContext& Context) const override;
+	
 };

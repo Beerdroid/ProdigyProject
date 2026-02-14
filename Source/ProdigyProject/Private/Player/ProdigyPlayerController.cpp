@@ -157,6 +157,18 @@ bool AProdigyPlayerController::TryLockTargetUnderCursor()
 	return TryLockTarget(Candidate);
 }
 
+AActor* AProdigyPlayerController::GetActorUnderCursorForClick() const
+{
+	FHitResult Hit;
+
+	// 1) Combat target trace first
+	const bool bHitTarget = GetHitResultUnderCursor(TargetTraceChannel, false, Hit);
+	if (bHitTarget && Hit.GetActor()) return Hit.GetActor();
+
+	// 2) Fallback to base behavior (interactables/items)
+	return Super::GetActorUnderCursorForClick();
+}
+
 bool AProdigyPlayerController::TryLockTarget(AActor* Candidate)
 {
 	if (!IsValid(Candidate))
@@ -289,16 +301,4 @@ UCombatSubsystem* AProdigyPlayerController::GetCombatSubsystem() const
 {
 	UGameInstance* GI = GetGameInstance();
 	return GI ? GI->GetSubsystem<UCombatSubsystem>() : nullptr;
-}
-
-AActor* AProdigyPlayerController::GetActorUnderCursorForClick() const
-{
-	FHitResult Hit;
-
-	// 1) Combat target trace first
-	const bool bHitTarget = GetHitResultUnderCursor(TargetTraceChannel, false, Hit);
-	if (bHitTarget && Hit.GetActor()) return Hit.GetActor();
-
-	// 2) Fallback to base behavior (interactables/items)
-	return Super::GetActorUnderCursorForClick();
 }
