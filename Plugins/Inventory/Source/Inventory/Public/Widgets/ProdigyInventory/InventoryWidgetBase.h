@@ -5,6 +5,7 @@
 #include "ProdigyInventory/ItemTypes.h"
 #include "InventoryWidgetBase.generated.h"
 
+class UEquipSlotWidget;
 class AInvPlayerController;
 class UTextBlock;
 class UInvSplitCursorWidget;
@@ -125,7 +126,19 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category="Inventory|UI")
 	int32 Columns = 6;
 
+	static void InitEquipSlot(UEquipSlotWidget* Slot, UInventoryComponent* Inv);
 
+	UPROPERTY(meta=(BindWidgetOptional))
+	TObjectPtr<UEquipSlotWidget> EquipSlot_Head = nullptr;
+
+	UPROPERTY(meta=(BindWidgetOptional))
+	TObjectPtr<UEquipSlotWidget> EquipSlot_Chest = nullptr;
+
+	UPROPERTY(meta=(BindWidgetOptional))
+	TObjectPtr<UEquipSlotWidget> EquipSlot_Cloak = nullptr;
+
+	UPROPERTY(meta=(BindWidgetOptional))
+	TObjectPtr<UEquipSlotWidget> EquipSlot_Weapon = nullptr;
 
 private:
 	TWeakObjectPtr<UInventoryComponent> Inventory;

@@ -254,17 +254,58 @@ bool UGridSlotWidget::NativeOnDrop(
 	}
 
 	UE_LOG(LogTemp, Warning,
-	       TEXT("[SLOT DROP] Slot=%d SrcIdx=%d SrcInv=%s"),
+	       TEXT("[SLOT DROP] Slot=%d SrcIdx=%d SrcInv=%s FromEquip=%d SrcEquipTag=%s"),
 	       SlotIndex,
 	       Op->SourceIndex,
-	       *GetNameSafe(Op->SourceInventory));
+	       *GetNameSafe(Op->SourceInventory),
+	       Op->bFromEquipSlot ? 1 : 0,
+	       *Op->SourceEquipSlotTag.ToString());
+
+	UInventoryComponent* TargetInv = Inventory.Get();
+	if (!IsValid(TargetInv))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SLOT DROP] Invalid TargetInv"));
+		return false;
+	}
+
+	// ===== Equip -> Inventory (unequip) =====
+	if (Op->bFromEquipSlot)
+	{
+		UInventoryComponent* SourceInv = Op->SourceInventory;
+
+		if (!IsValid(SourceInv))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[SLOT DROP] EquipDrop: invalid SourceInv"));
+			return false;
+		}
+		if (!Op->SourceEquipSlotTag.IsValid())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[SLOT DROP] EquipDrop: invalid SourceEquipSlotTag"));
+			return false;
+		}
+
+		// Mark handled so DragCancelled won't drop to world
+		Op->bDropHandled = true;
+
+		// Unequip goes back to inventory (stack/empty-slot rules apply)
+		TArray<int32> Changed;
+		const bool bOk = SourceInv->UnequipToInventory(Op->SourceEquipSlotTag, Changed);
+
+		UE_LOG(LogTemp, Warning,
+		       TEXT("[SLOT DROP] EquipDrop: UnequipToInventory SlotTag=%s Result=%d Changed=%d"),
+		       *Op->SourceEquipSlotTag.ToString(),
+		       bOk ? 1 : 0,
+		       Changed.Num());
+
+		return bOk;
+	}
+
+	// ===== Normal Inventory drag/drop =====
 
 	UInventoryComponent* SourceInv = Op->SourceInventory;
-	UInventoryComponent* TargetInv = Inventory.Get();
-
-	if (!IsValid(SourceInv) || !IsValid(TargetInv))
+	if (!IsValid(SourceInv))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[SLOT DROP] Invalid inventories"));
+		UE_LOG(LogTemp, Warning, TEXT("[SLOT DROP] Invalid SourceInv"));
 		return false;
 	}
 

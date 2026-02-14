@@ -218,6 +218,7 @@ void UInventoryComponent::MarkSlotChanged(int32 SlotIndex, TArray<int32>& InOutC
 	InOutChangedSlots.AddUnique(SlotIndex);
 }
 
+
 int32 UInventoryComponent::GetEmptySlotCount() const
 {
 	int32 Count = 0;
@@ -816,4 +817,179 @@ bool UInventoryComponent::RemoveByItemID(FName ItemID, int32 Quantity, int32& Ou
 	}
 
 	return OutRemoved > 0;
+}
+
+int32 UInventoryComponent::FindEquippedIndex(FGameplayTag EquipSlotTag) const
+{
+	if (!EquipSlotTag.IsValid()) return INDEX_NONE;
+
+	for (int32 i = 0; i < EquippedItems.Num(); ++i)
+	{
+		if (EquippedItems[i].EquipSlotTag.MatchesTagExact(EquipSlotTag))
+		{
+			return i;
+		}
+	}
+	return INDEX_NONE;
+}
+
+bool UInventoryComponent::GetEquippedItem(FGameplayTag EquipSlotTag, FName& OutItemID) const
+{
+	OutItemID = NAME_None;
+
+	const int32 Idx = FindEquippedIndex(EquipSlotTag);
+	if (Idx == INDEX_NONE) return false;
+
+	OutItemID = EquippedItems[Idx].ItemID;
+	return !OutItemID.IsNone();
+}
+
+bool UInventoryComponent::EquipFromSlot(int32 SlotIndex, TArray<int32>& OutChangedSlots)
+{
+	OutChangedSlots.Reset();
+
+	UE_LOG(LogInvPickupCore, Warning,
+		TEXT("[EquipFromSlot] SlotIndex=%d Owner=%s"),
+		SlotIndex,
+		*GetNameSafe(GetOwner()));
+
+	if (!IsValidIndex(SlotIndex))
+	{
+		UE_LOG(LogInvPickupCore, Warning, TEXT("  -> Invalid slot index"));
+		return false;
+	}
+
+	FInventorySlot& S = Slots[SlotIndex];
+	if (S.IsEmpty())
+	{
+		UE_LOG(LogInvPickupCore, Warning, TEXT("  -> Slot empty"));
+		return false;
+	}
+
+	const FName ItemID = S.ItemID;
+
+	FItemRow Row;
+	if (!TryGetItemDef(ItemID, Row))
+	{
+		UE_LOG(LogInvPickupCore, Warning, TEXT("  -> ItemRow not found for %s"), *ItemID.ToString());
+		return false;
+	}
+
+	if (Row.Category != EItemCategory::Equipment)
+	{
+		UE_LOG(LogInvPickupCore, Warning, TEXT("  -> Not equipment (Category=%d)"), (int32)Row.Category);
+		return false;
+	}
+
+	if (!Row.EquipSlotTag.IsValid())
+	{
+		UE_LOG(LogInvPickupCore, Warning, TEXT("  -> EquipSlotTag invalid"));
+		return false;
+	}
+
+	UE_LOG(LogInvPickupCore, Warning,
+		TEXT("  -> Equipping ItemID=%s SlotTag=%s"),
+		*ItemID.ToString(),
+		*Row.EquipSlotTag.ToString());
+
+	// Existing equip check
+	const int32 ExistingIdx = FindEquippedIndex(Row.EquipSlotTag);
+	if (ExistingIdx != INDEX_NONE && !EquippedItems[ExistingIdx].ItemID.IsNone())
+	{
+		const FName PrevItemID = EquippedItems[ExistingIdx].ItemID;
+
+		UE_LOG(LogInvPickupCore, Warning,
+			TEXT("  -> Slot already occupied. Unequipping previous: %s"),
+			*PrevItemID.ToString());
+
+		int32 Remainder = 0;
+		TArray<int32> LocalChanged;
+		const bool bAdded = AddItem(PrevItemID, 1, Remainder, LocalChanged);
+
+		if (!bAdded || Remainder != 0)
+		{
+			UE_LOG(LogInvPickupCore, Warning, TEXT("  -> Failed to return previous item to inventory"));
+			return false;
+		}
+
+		for (int32 Idx : LocalChanged)
+		{
+			MarkSlotChanged(Idx, OutChangedSlots);
+		}
+
+		EquippedItems[ExistingIdx].ItemID = NAME_None;
+
+		OnItemUnequipped.Broadcast(Row.EquipSlotTag, PrevItemID);
+	}
+
+	// Remove 1 from slot
+	S.Quantity -= 1;
+	if (S.Quantity <= 0)
+	{
+		S.Clear();
+	}
+	MarkSlotChanged(SlotIndex, OutChangedSlots);
+
+	// Write equip state
+	if (ExistingIdx == INDEX_NONE)
+	{
+		FEquippedItemEntry E;
+		E.EquipSlotTag = Row.EquipSlotTag;
+		E.ItemID = ItemID;
+		EquippedItems.Add(E);
+	}
+	else
+	{
+		EquippedItems[ExistingIdx].ItemID = ItemID;
+	}
+
+	if (OutChangedSlots.Num() > 0)
+	{
+		BroadcastSlotsChanged(OutChangedSlots);
+	}
+
+	UE_LOG(LogInvPickupCore, Warning,
+		TEXT("  -> Broadcast OnItemEquipped SlotTag=%s ItemID=%s"),
+		*Row.EquipSlotTag.ToString(),
+		*ItemID.ToString());
+
+	OnItemEquipped.Broadcast(Row.EquipSlotTag, ItemID);
+
+	return true;
+}
+
+bool UInventoryComponent::UnequipToInventory(FGameplayTag EquipSlotTag, TArray<int32>& OutChangedSlots)
+{
+	OutChangedSlots.Reset();
+
+	if (!EquipSlotTag.IsValid()) return false;
+
+	const int32 EqIdx = FindEquippedIndex(EquipSlotTag);
+	if (EqIdx == INDEX_NONE) return false;
+
+	const FName ItemID = EquippedItems[EqIdx].ItemID;
+	if (ItemID.IsNone()) return false;
+
+	int32 Remainder = 0;
+	TArray<int32> LocalChanged;
+	const bool bAdded = AddItem(ItemID, 1, Remainder, LocalChanged);
+	if (!bAdded || Remainder != 0)
+	{
+		return false;
+	}
+
+	for (int32 Idx : LocalChanged)
+	{
+		MarkSlotChanged(Idx, OutChangedSlots);
+	}
+
+	EquippedItems[EqIdx].ItemID = NAME_None;
+
+	if (OutChangedSlots.Num() > 0)
+	{
+		BroadcastSlotsChanged(OutChangedSlots);
+	}
+
+	OnItemUnequipped.Broadcast(EquipSlotTag, ItemID);
+	return true;
 }

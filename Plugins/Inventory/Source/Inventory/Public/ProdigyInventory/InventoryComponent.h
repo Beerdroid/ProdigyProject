@@ -22,6 +22,18 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnItemIDChanged, FName, ItemID);
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FOnItemEquipped,
+	FGameplayTag, EquipSlotTag,
+	FName, ItemID
+);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FOnItemUnequipped,
+	FGameplayTag, EquipSlotTag,
+	FName, ItemID
+);
+
 
 UENUM(BlueprintType)
 enum class EInventoryType : uint8
@@ -159,6 +171,23 @@ public:
 
 	int32 FindFirstEmptySlot() const;
 
+	// ===== Equipment Events =====
+	UPROPERTY(BlueprintAssignable, Category="Inventory|Equipment")
+	FOnItemEquipped OnItemEquipped;
+
+	UPROPERTY(BlueprintAssignable, Category="Inventory|Equipment")
+	FOnItemUnequipped OnItemUnequipped;
+
+	// ===== Equipment API =====
+	UFUNCTION(BlueprintCallable, Category="Inventory|Equipment")
+	bool EquipFromSlot(int32 SlotIndex, TArray<int32>& OutChangedSlots);
+
+	UFUNCTION(BlueprintCallable, Category="Inventory|Equipment")
+	bool UnequipToInventory(FGameplayTag EquipSlotTag, TArray<int32>& OutChangedSlots);
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="Inventory|Equipment")
+	bool GetEquippedItem(FGameplayTag EquipSlotTag, FName& OutItemID) const;
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -170,4 +199,9 @@ private:
 	bool IsStackable(FName ItemID) const;
 
 	void MarkSlotChanged(int32 SlotIndex, TArray<int32>& InOutChangedSlots);
+
+	UPROPERTY()
+	TArray<FEquippedItemEntry> EquippedItems;
+
+	int32 FindEquippedIndex(FGameplayTag EquipSlotTag) const;
 };

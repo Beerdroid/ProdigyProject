@@ -6,6 +6,8 @@
 #include "GameplayTagContainer.h"
 #include "ItemTypes.generated.h"
 
+class AInvEquipActor;
+
 UENUM(BlueprintType)
 enum class EItemCategory : uint8
 {
@@ -41,6 +43,12 @@ struct FItemRow : public FTableRowBase
 
 	// Optional: equipment and extra classification
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) FGameplayTag EquipSlotTag;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly)
+	TSoftClassPtr<AInvEquipActor> EquipActorClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly)
+	FName EquipAttachSocket = NAME_None;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) bool bNoDrop = false;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) bool bNoSell = false;
@@ -93,4 +101,16 @@ struct FInventorySlotView
 	// for hover later
 	UPROPERTY(BlueprintReadOnly) EItemCategory Category = EItemCategory::Junk;
 	UPROPERTY(BlueprintReadOnly) FGameplayTagContainer Tags;
+};
+
+USTRUCT(BlueprintType)
+struct FEquippedItemEntry
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly)
+	FGameplayTag EquipSlotTag;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly)
+	FName ItemID = NAME_None;
 };
