@@ -21,34 +21,3 @@ void UProdigyItemDatabase::BuildCacheIfNeeded() const
 
 	bCacheBuilt = true;
 }
-
-bool UProdigyItemDatabase::FindManifest(FName ItemID, FInv_ItemManifest& OutManifest) const
-{
-	if (ItemID.IsNone())
-	{
-		return false;
-	}
-
-	BuildCacheIfNeeded();
-
-	if (const int32* FoundIndex = IndexByID.Find(ItemID))
-	{
-		if (Items.IsValidIndex(*FoundIndex))
-		{
-			OutManifest = Items[*FoundIndex].Manifest; // copy out
-			return true;
-		}
-	}
-
-	// Fallback (should rarely run, but safe if cache got stale in editor)
-	for (const FProdigyItemRecord& R : Items)
-	{
-		if (R.ItemID == ItemID)
-		{
-			OutManifest = R.Manifest;
-			return true;
-		}
-	}
-
-	return false;
-}

@@ -2,8 +2,6 @@
 
 #include "Game/ProdigyGameState.h"
 #include "GameFramework/Actor.h"
-#include "InventoryManagement/Components/Inv_InventoryComponent.h"
-#include "Items/Fragments/Inv_ItemFragment.h"
 #include "Net/UnrealNetwork.h"
 #include "ProdigyInventory/InventoryComponent.h"
 

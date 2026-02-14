@@ -3,7 +3,6 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Player/Inv_PlayerController.h"
 #include "GameplayTagContainer.h"
 #include "AbilitySystem/ActionTypes.h"
 #include "ProdigyInventory/InvPlayerController.h"

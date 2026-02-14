@@ -8,7 +8,6 @@
 #include "GameFramework/Actor.h"
 #include "Interfaces/CombatantInterface.h"
 #include "Interfaces/UInv_Interactable.h"
-#include "InventoryManagement/Components/Inv_InventoryComponent.h"
 
 AProdigyPlayerController::AProdigyPlayerController()
 {
