@@ -700,14 +700,31 @@ void AInvPlayerController::OnSetDestinationCompleted()
 	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
 	const float HeldSeconds = static_cast<float>(Now - PressStartTimeSeconds);
 
-	// short click -> MoveTo
-	if (!bBlockMoveThisClick && HeldSeconds < PressedThreshold)
+	// LMB always cancels any pending pickup intent (RMB could start it, etc.)
+	ClearPendingPickup();
+
+	// Hold -> Follow already handled in Triggered()
+	if (HeldSeconds >= PressedThreshold)
 	{
-		MoveTo(CachedDestination);
+		bBlockMoveThisClick = false;
+		return;
+	}
+
+	// Short click: try target lock first, otherwise move
+	AActor* Clicked = GetActorUnderCursorForClick();
+
+	if (HandlePrimaryClickActor(Clicked))
+	{
+		// click consumed by targeting; do NOT move
+		bBlockMoveThisClick = true;
+		StopMovement();
+		return;
 	}
 
 	bBlockMoveThisClick = false;
+	MoveTo(CachedDestination);
 }
+
 
 void AInvPlayerController::OnSetDestinationCanceled()
 {
@@ -1148,4 +1165,27 @@ bool AInvPlayerController::ExecuteInventoryAction(UInventoryComponent* Source, i
 	}
 
 	return true;
+}
+
+AActor* AInvPlayerController::GetActorUnderCursorForClick() const
+{
+	FHitResult Hit;
+
+	// Prefer interact trace for characters/NPCs/world, because ItemTraceChannel is tuned for pickups.
+	const bool bHitInteract = GetHitResultUnderCursorByChannel(
+		UEngineTypes::ConvertToTraceType(InteractTraceChannel),
+		false,
+		Hit
+	);
+
+	if (bHitInteract && Hit.GetActor()) return Hit.GetActor();
+
+	// Fallback to item trace
+	const bool bHitItem = GetHitResultUnderCursorByChannel(
+		UEngineTypes::ConvertToTraceType(ItemTraceChannel),
+		false,
+		Hit
+	);
+
+	return bHitItem ? Hit.GetActor() : nullptr;
 }

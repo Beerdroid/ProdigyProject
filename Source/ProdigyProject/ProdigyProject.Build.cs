@@ -9,7 +9,7 @@ public class ProdigyProject : ModuleRules
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", 	"Niagara",
-			"AIModule", "NetCore", "GameplayTags", "Inventory"
+			"AIModule", "NetCore", "GameplayTags", "Inventory", "UMG", "DeveloperSettings", "PhysicsCore"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { "Networking", "Sockets" });

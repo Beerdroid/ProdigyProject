@@ -226,7 +226,11 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category="Economy|Events")
 	FOnGoldChanged OnGoldChanged;
-	
+
+	virtual bool HandlePrimaryClickActor(AActor* ClickedActor) { return false; }
+
+	virtual AActor* GetActorUnderCursorForClick() const;
+
 private:
 	UPROPERTY(EditDefaultsOnly, Category="Movement|FX")
 	TObjectPtr<UNiagaraSystem> FXCursor = nullptr;
