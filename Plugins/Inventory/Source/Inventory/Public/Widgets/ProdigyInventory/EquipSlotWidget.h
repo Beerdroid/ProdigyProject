@@ -36,6 +36,12 @@ protected:
 	UPROPERTY(meta=(BindWidgetOptional))
 	TObjectPtr<UImage> ItemIcon = nullptr;
 
+	UPROPERTY(meta=(BindWidgetOptional))
+	TObjectPtr<UImage> DefaultIcon = nullptr;
+
+	UPROPERTY(Transient)
+	bool bDefaultBrushCached = false;
+
 	virtual bool NativeOnDrop(
 		const FGeometry& InGeometry,
 		const FDragDropEvent& InDragDropEvent,

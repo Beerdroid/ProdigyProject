@@ -112,59 +112,114 @@ void UInvEquipmentComponent::RemoveEquippedActor(const FGameplayTag& EquipSlotTa
 void UInvEquipmentComponent::OnItemEquipped(FGameplayTag EquipSlotTag, FName ItemID)
 {
 	UE_LOG(LogEquipmentVisual, Warning,
-			TEXT("[OnItemEquipped] SlotTag=%s ItemID=%s Owner=%s"),
-			*EquipSlotTag.ToString(),
-			*ItemID.ToString(),
-			*GetNameSafe(GetOwner()));
+		TEXT("[OnItemEquipped] SlotTag=%s ItemID=%s Owner=%s"),
+		*EquipSlotTag.ToString(),
+		*ItemID.ToString(),
+		*GetNameSafe(GetOwner()));
+
+	// ---- basic gates
+	if (!EquipSlotTag.IsValid() || ItemID.IsNone())
+	{
+		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> BAD INPUT SlotTagValid=%d ItemIDNone=%d"),
+			EquipSlotTag.IsValid() ? 1 : 0,
+			ItemID.IsNone() ? 1 : 0);
+		return;
+	}
 
 	if (!InventoryComponent.IsValid())
 	{
-		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> InventoryComponent invalid"));
+		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> InventoryComponent INVALID"));
 		return;
 	}
 
 	if (!OwningSkeletalMesh.IsValid())
 	{
-		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> OwningSkeletalMesh invalid"));
+		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> OwningSkeletalMesh INVALID"));
 		return;
 	}
 
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> World INVALID"));
+		return;
+	}
+
+	// ---- resolve item row
 	FItemRow Row;
 	if (!InventoryComponent->TryGetItemDef(ItemID, Row))
 	{
-		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> Failed to resolve row"));
+		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> TryGetItemDef FAILED for ItemID=%s"), *ItemID.ToString());
 		return;
 	}
+
+	// log what we got (helps detect “wrong table/row” instantly)
+	const FSoftObjectPath SoftPath = Row.EquipActorClass.ToSoftObjectPath();
+	UE_LOG(LogEquipmentVisual, Warning,
+		TEXT("  -> Row: EquipSlotTag=%s  EquipAttachSocket=%s"),
+		*Row.EquipSlotTag.ToString(),
+		*Row.EquipAttachSocket.ToString());
 
 	UE_LOG(LogEquipmentVisual, Warning,
-	TEXT("  -> EquipActorClass Valid=%d Path=%s"),
-	Row.EquipActorClass.IsValid() ? 1 : 0,
-	*Row.EquipActorClass.ToString());
+		TEXT("  -> EquipActorClass: IsNull=%d IsValidPath=%d Path=%s"),
+		Row.EquipActorClass.IsNull() ? 1 : 0,
+		SoftPath.IsValid() ? 1 : 0,
+		*SoftPath.ToString());
 
-	if (!Row.EquipActorClass.IsValid())
+	if (Row.EquipActorClass.IsNull())
 	{
-		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> EquipActorClass not set"));
+		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> EquipActorClass is NULL in DT row"));
 		return;
 	}
 
-	UWorld* W = GetWorld();
-	if (!W)
-	{
-		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> World invalid"));
-		return;
-	}
+	// ---- replace old visual first
+	RemoveEquippedActor(EquipSlotTag);
 
+	// ---- load class (primary path)
 	TSubclassOf<AInvEquipActor> EquipClass = Row.EquipActorClass.LoadSynchronous();
+
+	// fallback load (helps when redirectors / stale paths / weird DT serialization)
 	if (!EquipClass)
 	{
-		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> Failed to load EquipActorClass"));
+		const FString PathStr = SoftPath.ToString();
+		UE_LOG(LogEquipmentVisual, Warning,
+			TEXT("  -> LoadSynchronous FAILED, trying StaticLoadClass on path: %s"),
+			*PathStr);
+
+		if (!PathStr.IsEmpty())
+		{
+			UClass* Loaded = StaticLoadClass(AInvEquipActor::StaticClass(), nullptr, *PathStr);
+			EquipClass = Loaded;
+		}
+	}
+
+	if (!EquipClass)
+	{
+		UE_LOG(LogEquipmentVisual, Error,
+			TEXT("  -> FAILED to load EquipActorClass for ItemID=%s. SoftPath=%s"),
+			*ItemID.ToString(),
+			*SoftPath.ToString());
 		return;
 	}
 
-	AInvEquipActor* Spawned = W->SpawnActor<AInvEquipActor>(EquipClass);
+	USkeletalMeshComponent* Mesh = OwningSkeletalMesh.Get();
+	if (!Mesh)
+	{
+		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> Mesh NULL after IsValid??"));
+		return;
+	}
+
+	// ---- spawn at mesh transform to avoid “on floor for 1 frame”
+	const FTransform SpawnTM = Mesh->GetComponentTransform();
+
+	FActorSpawnParameters Params;
+	Params.Owner = GetOwner();
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	AInvEquipActor* Spawned = World->SpawnActor<AInvEquipActor>(EquipClass, SpawnTM, Params);
 	if (!IsValid(Spawned))
 	{
-		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> Spawn failed"));
+		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> SpawnActor FAILED"));
 		return;
 	}
 
@@ -173,18 +228,59 @@ void UInvEquipmentComponent::OnItemEquipped(FGameplayTag EquipSlotTag, FName Ite
 	Spawned->SetItemID(ItemID);
 
 	UE_LOG(LogEquipmentVisual, Warning,
-		TEXT("  -> Attaching to mesh %s"),
-		*GetNameSafe(OwningSkeletalMesh.Get()));
+		TEXT("  -> Attaching to mesh=%s  Socket=%s"),
+		*GetNameSafe(Mesh),
+		*Row.EquipAttachSocket.ToString());
 
-	Spawned->AttachToComponent(
-		OwningSkeletalMesh.Get(),
-		FAttachmentTransformRules::SnapToTargetNotIncludingScale
-	);
+	// ---- attach
+	const FName SocketName = Row.EquipAttachSocket;
+
+	if (SocketName != NAME_None)
+	{
+		const bool bSocketExists = Mesh->DoesSocketExist(SocketName);
+		UE_LOG(LogEquipmentVisual, Warning,
+			TEXT("  -> SocketExists=%d"),
+			bSocketExists ? 1 : 0);
+
+		if (bSocketExists)
+		{
+			Spawned->AttachToComponent(
+				Mesh,
+				FAttachmentTransformRules::SnapToTargetNotIncludingScale,
+				SocketName
+			);
+		}
+		else
+		{
+			// socket requested but missing -> fallback to root attach
+			Spawned->AttachToComponent(
+				Mesh,
+				FAttachmentTransformRules::SnapToTargetNotIncludingScale
+			);
+		}
+	}
+	else
+	{
+		// no socket -> root attach (your “cloak” case)
+		Spawned->AttachToComponent(
+			Mesh,
+			FAttachmentTransformRules::SnapToTargetNotIncludingScale
+		);
+	}
+
+	// ---- enforce clean relative after attach (prevents “kept spawn offset” cases)
+	Spawned->SetActorRelativeLocation(FVector::ZeroVector);
+	Spawned->SetActorRelativeRotation(FRotator::ZeroRotator);
+	Spawned->SetActorRelativeScale3D(FVector::OneVector);
 
 	EquippedActors.Add(Spawned);
 
-	UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> Equip visual attached"));
+	UE_LOG(LogEquipmentVisual, Warning,
+		TEXT("  -> OK Attached. ParentSocket=%s WorldLoc=%s"),
+		*Spawned->GetAttachParentSocketName().ToString(),
+		*Spawned->GetActorLocation().ToString());
 }
+
 
 void UInvEquipmentComponent::OnItemUnequipped(FGameplayTag EquipSlotTag, FName ItemID)
 {

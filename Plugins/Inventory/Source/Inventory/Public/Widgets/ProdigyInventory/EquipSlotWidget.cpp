@@ -41,30 +41,63 @@ void UEquipSlotWidget::HandleItemUnequipped(FGameplayTag InEquipSlotTag, FName I
 
 void UEquipSlotWidget::RefreshVisual()
 {
+	const bool bHasItemIcon    = IsValid(ItemIcon);
+	const bool bHasDefaultIcon = IsValid(DefaultIcon);
+
+	auto SetEmptyState = [&]()
+	{
+		if (bHasItemIcon)
+		{
+			ItemIcon->SetBrushFromTexture(nullptr, /*bMatchSize*/ false);
+			ItemIcon->SetVisibility(ESlateVisibility::Hidden);
+		}
+		if (bHasDefaultIcon)
+		{
+			DefaultIcon->SetVisibility(ESlateVisibility::Visible);
+		}
+	};
+
+	// invalid setup => empty
 	if (!Inventory.IsValid() || !EquipSlotTag.IsValid())
 	{
-		if (ItemIcon) ItemIcon->SetBrushFromTexture(nullptr);
+		SetEmptyState();
 		return;
 	}
 
+	// no equipped item => empty
 	FName EquippedItemID = NAME_None;
 	if (!Inventory->GetEquippedItem(EquipSlotTag, EquippedItemID) || EquippedItemID.IsNone())
 	{
-		if (ItemIcon) ItemIcon->SetBrushFromTexture(nullptr);
+		SetEmptyState();
 		return;
 	}
 
+	// resolve item row
 	FItemRow Row;
 	if (!Inventory->TryGetItemDef(EquippedItemID, Row))
 	{
-		if (ItemIcon) ItemIcon->SetBrushFromTexture(nullptr);
+		SetEmptyState();
 		return;
 	}
 
-	if (ItemIcon)
+	// load icon
+	UTexture2D* Tex = Row.Icon.LoadSynchronous();
+	if (!IsValid(Tex))
 	{
-		UTexture2D* Tex = Row.Icon.LoadSynchronous();
-		ItemIcon->SetBrushFromTexture(Tex);
+		SetEmptyState();
+		return;
+	}
+
+	// equipped state
+	if (bHasItemIcon)
+	{
+		ItemIcon->SetBrushFromTexture(Tex, /*bMatchSize*/ true);
+		ItemIcon->SetVisibility(ESlateVisibility::Visible);
+	}
+
+	if (bHasDefaultIcon)
+	{
+		DefaultIcon->SetVisibility(ESlateVisibility::Hidden);
 	}
 }
 
