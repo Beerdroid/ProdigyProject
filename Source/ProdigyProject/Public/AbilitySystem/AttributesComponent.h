@@ -12,18 +12,55 @@ struct FAttributeEntry
 {
 	GENERATED_BODY()
 
-	// Identifier, e.g. Attr.Health, Attr.MaxHealth, Attr.AP, Attr.MaxAP
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Attributes")
 	FGameplayTag AttributeTag;
 
-	// "Base" or template value (optional for now but useful later)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Attributes")
 	float BaseValue = 0.f;
 
-	// Current runtime value
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Attributes")
 	float CurrentValue = 0.f;
 };
+
+UENUM(BlueprintType)
+enum class EAttrModOp : uint8
+{
+	Add      UMETA(DisplayName="Add"),
+	Multiply UMETA(DisplayName="Multiply"),
+	Override UMETA(DisplayName="Override")
+};
+
+USTRUCT(BlueprintType)
+struct FAttributeMod
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Attributes")
+	FGameplayTag AttributeTag;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Attributes")
+	EAttrModOp Op = EAttrModOp::Add;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Attributes")
+	float Magnitude = 0.f;
+};
+
+USTRUCT()
+struct FAttrModSource
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TArray<FAttributeMod> Mods;
+};
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(
+	FOnFinalAttributeChanged,
+	FGameplayTag, AttributeTag,
+	float, NewFinalValue,
+	float, Delta,
+	UObject*, Source
+);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(
 	FOnAttributeChanged,
@@ -64,6 +101,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Attributes")
 	float GetCurrentValue(FGameplayTag AttributeTag) const;
 
+	// NEW: Base + modifiers (equipment, buffs, etc.)
+	UFUNCTION(BlueprintCallable, Category="Attributes")
+	float GetFinalValue(FGameplayTag AttributeTag) const;
+
 	// --- Write ---
 	UFUNCTION(BlueprintCallable, Category="Attributes")
 	bool SetBaseValue(FGameplayTag AttributeTag, float NewBaseValue, AActor* InstigatorActor);
@@ -74,9 +115,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Attributes")
 	bool ModifyCurrentValue(FGameplayTag AttributeTag, float Delta, AActor* InstigatorActor);
 
-	// Convenience: sets CurrentValue of tag A to CurrentValue of tag B (commonly AP <- MaxAP)
 	UFUNCTION(BlueprintCallable, Category="Attributes")
 	bool CopyCurrentValue(FGameplayTag FromTag, FGameplayTag ToTag, AActor* InstigatorActor);
+
+	// --- Modifier Layer API ---
+	UFUNCTION(BlueprintCallable, Category="Attributes|Mods")
+	void SetModsForSource(UObject* Source, const TArray<FAttributeMod>& Mods, UObject* InstigatorSource);
+
+	UFUNCTION(BlueprintCallable, Category="Attributes|Mods")
+	void ClearModsForSource(UObject* Source, UObject* InstigatorSource);
 
 protected:
 	virtual void BeginPlay() override;
@@ -86,10 +133,24 @@ private:
 	UPROPERTY(Transient)
 	TMap<FGameplayTag, FAttributeEntry> AttributeMap;
 
+	// Source -> mods
+	UPROPERTY(Transient)
+	TMap<TWeakObjectPtr<UObject>, FAttrModSource> ModSources;
+
 	void BuildMapFromDefaults();
 
 	FAttributeEntry* FindEntryMutable(FGameplayTag AttributeTag);
 	const FAttributeEntry* FindEntry(FGameplayTag AttributeTag) const;
 
 	void BroadcastChanged(const FGameplayTag Tag, float OldValue, float NewValue, AActor* InstigatorActor);
+
+	// Tag-based policy (no editor setup)
+	void ClampResourcesIfNeeded(UObject* InstigatorSource);
+
+	// Helpers
+	void ReClampAllRelevantCurrents(UObject* InstigatorSource);
+
+	// stable "source objects" per equip slot tag so each slot has its own modifier source
+	UPROPERTY(Transient)
+	TMap<FGameplayTag, TObjectPtr<UObject>> EquipSlotSources;
 };

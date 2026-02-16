@@ -4,6 +4,7 @@
 #include "CoreMinimal.h"
 #include "Engine/DataTable.h"
 #include "GameplayTagContainer.h"
+#include "InvEquipmentComponent.h"
 #include "ItemTypes.generated.h"
 
 class AInvEquipActor;
@@ -16,6 +17,29 @@ enum class EItemCategory : uint8
 	Quest,
 	Junk,
 	Craft
+};
+
+UENUM(BlueprintType)
+enum class EInvAttrModOp : uint8
+{
+	Add      UMETA(DisplayName="Add"),
+	Multiply UMETA(DisplayName="Multiply"),
+	Override UMETA(DisplayName="Override")
+};
+
+USTRUCT(BlueprintType)
+struct FInvAttributeMod
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly)
+	FGameplayTag AttributeTag;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly)
+	EInvAttrModOp Op = EInvAttrModOp::Add;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly)
+	float Magnitude = 0.f;
 };
 
 /**
@@ -49,6 +73,9 @@ struct FItemRow : public FTableRowBase
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly)
 	FName EquipAttachSocket = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Equipment|Stats")
+	TArray<FInvAttributeMod> AttributeMods;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) bool bNoDrop = false;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) bool bNoSell = false;

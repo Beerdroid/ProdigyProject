@@ -2,12 +2,17 @@
 
 #include "AbilitySystem/ActionComponent.h"
 #include "AbilitySystem/ActionTypes.h"
+#include "AbilitySystem/AttributesComponent.h"
 #include "AbilitySystem/CombatSubsystem.h"
+#include "AbilitySystem/EquipModSource.h"
 #include "Quest/QuestLogComponent.h"
 #include "Quest/Integration/QuestIntegrationComponent.h"
 #include "GameFramework/Actor.h"
 #include "Interfaces/CombatantInterface.h"
 #include "Interfaces/UInv_Interactable.h"
+#include "ProdigyInventory/InvEquipActor.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogEquipMods, Log, All);
 
 AProdigyPlayerController::AProdigyPlayerController()
 {
@@ -19,6 +24,12 @@ void AProdigyPlayerController::BeginPlay()
 	Super::BeginPlay();
 
 	CacheQuestComponents();
+
+	// Ensure we are bound before any equip happens
+	EnsureEquipWiring();
+
+	// Optional but recommended: apply mods if something is already equipped (load / PIE start)
+	ReapplyAllEquipmentMods();
 
 	UE_LOG(LogTemp, Warning, TEXT("ProdigyPC BeginPlay: %s Local=%d Pawn=%s"),
 	*GetNameSafe(this), IsLocalController(), *GetNameSafe(GetPawn()));
@@ -300,4 +311,240 @@ UCombatSubsystem* AProdigyPlayerController::GetCombatSubsystem() const
 {
 	UGameInstance* GI = GetGameInstance();
 	return GI ? GI->GetSubsystem<UCombatSubsystem>() : nullptr;
+}
+
+void AProdigyPlayerController::HandlePossessedPawnChanged(APawn* PreviousPawn, APawn* NewPawn)
+{
+	UE_LOG(LogEquipMods, Warning, TEXT("[PC] PawnChanged Old=%s New=%s"),
+		*GetNameSafe(PreviousPawn), *GetNameSafe(NewPawn));
+
+	Attributes = ResolveAttributesFromPawn(NewPawn);
+
+	// re-apply all equipped mods to new pawn
+	ReapplyAllEquipmentMods();
+}
+
+UInventoryComponent* AProdigyPlayerController::ResolveInventory() const
+{
+	return FindComponentByClass<UInventoryComponent>();
+}
+
+UAttributesComponent* AProdigyPlayerController::ResolveAttributesFromPawn(APawn* OwnPawn) const
+{
+	if (!IsValid(OwnPawn)) return nullptr;
+	return OwnPawn->FindComponentByClass<UAttributesComponent>();
+}
+
+void AProdigyPlayerController::BindInventoryDelegates()
+{
+	if (!Inventory.IsValid())
+	{
+		UE_LOG(LogEquipMods, Warning, TEXT("[PC] No InventoryComponent to bind"));
+		return;
+	}
+
+	Inventory->OnItemEquipped.RemoveAll(this);
+	Inventory->OnItemUnequipped.RemoveAll(this);
+
+	Inventory->OnItemEquipped.AddDynamic(this, &ThisClass::HandleItemEquipped);
+	Inventory->OnItemUnequipped.AddDynamic(this, &ThisClass::HandleItemUnequipped);
+
+	UE_LOG(LogEquipMods, Warning, TEXT("[PC] Bound Inventory equip delegates Inv=%s (%p) Owner=%s"),
+		*GetNameSafe(Inventory.Get()),
+		Inventory.Get(),
+		*GetNameSafe(Inventory.IsValid() ? Inventory->GetOwner() : nullptr));
+}
+
+UObject* AProdigyPlayerController::GetOrCreateEquipSource(FGameplayTag SlotTag)
+{
+	if (!SlotTag.IsValid()) return nullptr;
+
+	if (TObjectPtr<UEquipModSource>* Found = EquipSources.Find(SlotTag))
+	{
+		return Found->Get();
+	}
+
+	UEquipModSource* NewSource = NewObject<UEquipModSource>(this);
+	NewSource->SlotTag = SlotTag;
+
+	EquipSources.Add(SlotTag, NewSource);
+	return NewSource;
+}
+
+void AProdigyPlayerController::ClearAllEquipSources(UAttributesComponent* Attr)
+{
+	if (!IsValid(Attr)) return;
+
+	for (auto& Pair : EquipSources)
+	{
+		if (IsValid(Pair.Value))
+		{
+			Attr->ClearModsForSource(Pair.Value, this);
+		}
+	}
+}
+
+static EAttrModOp ToMainOp(EInvAttrModOp In)
+{
+	switch (In)
+	{
+	case EInvAttrModOp::Add:      return EAttrModOp::Add;
+	case EInvAttrModOp::Multiply: return EAttrModOp::Multiply;
+	case EInvAttrModOp::Override: return EAttrModOp::Override;
+	default:                      return EAttrModOp::Add;
+	}
+}
+
+static void ConvertInvMods(const TArray<FInvAttributeMod>& In, TArray<FAttributeMod>& Out)
+{
+	Out.Reset();
+	Out.Reserve(In.Num());
+
+	for (const FInvAttributeMod& M : In)
+	{
+		if (!M.AttributeTag.IsValid()) continue;
+
+		FAttributeMod X;
+		X.AttributeTag = M.AttributeTag;
+		X.Op = ToMainOp(M.Op);
+		X.Magnitude = M.Magnitude;
+		Out.Add(X);
+	}
+}
+
+bool AProdigyPlayerController::EnsureEquipWiring()
+{
+	// Inventory on PC
+	if (!Inventory.IsValid())
+	{
+		Inventory = FindComponentByClass<UInventoryComponent>();
+	}
+
+	// EquipmentComp on PC (BP-added)
+	if (!EquipmentComp.IsValid())
+	{
+		EquipmentComp = FindComponentByClass<UInvEquipmentComponent>();
+	}
+
+	// Attributes on pawn
+	UAttributesComponent* Attr = Attributes.Get();
+	if (!IsValid(Attr))
+	{
+		Attr = ResolveAttributesFromPawn(GetPawn());
+		Attributes = Attr;
+	}
+
+	if (!Inventory.IsValid() || !EquipmentComp.IsValid() || !IsValid(Attr))
+	{
+		UE_LOG(LogEquipMods, Warning,
+			TEXT("[PC] EnsureEquipWiring FAILED Inv=%s EquipComp=%s Attr=%s Pawn=%s"),
+			*GetNameSafe(Inventory.Get()),
+			*GetNameSafe(EquipmentComp.Get()),
+			*GetNameSafe(Attr),
+			*GetNameSafe(GetPawn()));
+		return false;
+	}
+
+	BindInventoryDelegates();     // safe to call repeatedly (RemoveAll inside)
+	return true;
+}
+
+void AProdigyPlayerController::HandleItemEquipped(FGameplayTag EquipSlotTag, FName ItemID)
+{
+	if (!EnsureEquipWiring()) return;
+
+	UE_LOG(LogEquipMods, Warning, TEXT("[PC] HandleItemEquipped Slot=%s Item=%s"),
+		*EquipSlotTag.ToString(), *ItemID.ToString());
+
+	UAttributesComponent* Attr = Attributes.Get();
+	if (!IsValid(Attr)) return;
+
+	FItemRow Row;
+	if (!Inventory->TryGetItemDef(ItemID, Row))
+	{
+		UE_LOG(LogEquipMods, Warning, TEXT("  -> TryGetItemDef failed for %s"), *ItemID.ToString());
+		return;
+	}
+
+	TArray<FAttributeMod> Mods;
+	ConvertInvMods(Row.AttributeMods, Mods);
+
+	UObject* Source = GetOrCreateEquipSource(EquipSlotTag);
+	if (!IsValid(Source)) return;
+
+	Attr->SetModsForSource(Source, Mods, this);
+}
+void AProdigyPlayerController::HandleItemUnequipped(FGameplayTag EquipSlotTag, FName ItemID)
+{
+	UE_LOG(LogEquipMods, Warning, TEXT("[PC] HandleItemUnequipped Slot=%s Item=%s"),
+		*EquipSlotTag.ToString(), *ItemID.ToString());
+
+	UAttributesComponent* Attr = Attributes.Get();
+	if (!Attr)
+	{
+		Attr = ResolveAttributesFromPawn(GetPawn());
+		Attributes = Attr;
+	}
+	if (!Attr) return;
+
+	UObject* Source = GetOrCreateEquipSource(EquipSlotTag);
+	if (!IsValid(Source)) return;
+
+	Attr->ClearModsForSource(Source, /*InstigatorSource*/ this);
+}
+
+void AProdigyPlayerController::ReapplyAllEquipmentMods()
+{
+	
+	if (!EnsureEquipWiring()) return;
+	
+
+	UAttributesComponent* Attr = Attributes.Get();
+	if (!IsValid(Attr)) return;
+
+	UInventoryComponent* Inv = Inventory.Get();
+	if (!IsValid(Inv))
+	{
+		UE_LOG(LogEquipMods, Warning, TEXT("[PC] ReapplyAllEquipmentMods: Inventory invalid"));
+		return;
+	}
+
+	UE_LOG(LogEquipMods, Warning, TEXT("[PC] ReapplyAllEquipmentMods begin"));
+
+	// 1) Clear previous equipment-derived mod sources
+	ClearAllEquipSources(Attr);
+
+	// 2) Reapply from equipped state (InventoryComponent owns EquippedItems)
+	const TArray<FEquippedItemEntry> EquippedItems = Inv->GetEquippedItemsCopy();
+	
+	UE_LOG(LogEquipMods, Warning, TEXT("[PC] EquippedItems=%d"), EquippedItems.Num());
+
+	for (const FEquippedItemEntry& E : EquippedItems)
+	{
+		const FGameplayTag SlotTag = E.EquipSlotTag;
+		const FName ItemID = E.ItemID;
+
+		if (!SlotTag.IsValid() || ItemID.IsNone()) continue;
+
+		FItemRow Row;
+		if (!Inv->TryGetItemDef(ItemID, Row))
+		{
+			UE_LOG(LogEquipMods, Verbose, TEXT("[PC]  - Missing item def ItemID=%s"), *ItemID.ToString());
+			continue;
+		}
+
+		TArray<FAttributeMod> Mods;
+		ConvertInvMods(Row.AttributeMods, Mods);
+
+		UObject* Source = GetOrCreateEquipSource(SlotTag);
+		if (!IsValid(Source)) continue;
+
+		Attr->SetModsForSource(Source, Mods, this);
+
+		UE_LOG(LogEquipMods, Verbose, TEXT("[PC]  + Slot=%s Item=%s Mods=%d"),
+			*SlotTag.ToString(), *ItemID.ToString(), Mods.Num());
+		
+	}
+
+	UE_LOG(LogEquipMods, Warning, TEXT("[PC] ReapplyAllEquipmentMods end"));
 }
