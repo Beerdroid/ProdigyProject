@@ -421,7 +421,7 @@ bool AInvPlayerController::AutoTransfer_ExternalToPlayer(int32 ExternalFromIndex
 	);
 }
 
-bool AInvPlayerController::ConsumeFromSlot(int32 SlotIndex, TArray<int32>& OutChanged)
+bool AInvPlayerController::Player_ConsumeOne(int32 SlotIndex, TArray<int32>& OutChanged)
 {
 	EnsurePlayerInventoryResolved();
 	if (!InventoryComponent.IsValid()) return false;

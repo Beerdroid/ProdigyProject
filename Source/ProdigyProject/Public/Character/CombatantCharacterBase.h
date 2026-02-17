@@ -45,5 +45,4 @@ public:
 	virtual bool HasAttribute_Implementation(FGameplayTag AttributeTag) const override;
 	virtual float GetAttributeCurrentValue_Implementation(FGameplayTag AttributeTag) const override;
 	virtual bool ModifyAttributeCurrentValue_Implementation(FGameplayTag AttributeTag, float Delta, AActor* InstigatorActor) override;
-	virtual float GetAttributeFinalValue_Implementation(FGameplayTag AttributeTag) const override;
 };

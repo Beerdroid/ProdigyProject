@@ -2,9 +2,11 @@
 
 #include "ProdigyInventory/InvEquipActor.h"
 #include "ProdigyInventory/InventoryComponent.h"
-#include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/PlayerController.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/Character.h"
+#include "Kismet/GameplayStatics.h"
+#include "Widgets/ProdigyInventory/EquipSlotWidget.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogEquipmentVisual, Log, All);
 
@@ -22,67 +24,39 @@ void UInvEquipmentComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	OwningPC = Cast<APlayerController>(GetOwner());
-
 	UE_LOG(LogEquipmentVisual, Warning,
-		TEXT("[EquipComp BeginPlay] Owner=%s PC=%s"),
-		*GetNameSafe(GetOwner()),
-		*GetNameSafe(OwningPC.Get()));
+		TEXT("[EquipComp BeginPlay] Owner=%s"),
+		*GetNameSafe(GetOwner()));
 
-	// 1) Inventory lives on this PC now
+	// Resolve player inventory (it lives on PC)
 	InitInventoryComponent();
 
-	// 2) Mesh comes from pawn (not owner anymore)
-	if (OwningPC.IsValid())
+	// Resolve skeletal mesh from owner (your log shows owner is BP_TopDownCharacter)
+	if (!OwningSkeletalMesh.IsValid())
 	{
-		// If pawn already exists, resolve immediately
-		ResolveMeshFromPawn(OwningPC->GetPawn());
+		if (ACharacter* C = Cast<ACharacter>(GetOwner()))
+		{
+			USkeletalMeshComponent* M = C->GetMesh();
+			OwningSkeletalMesh = M;
 
-		// Also bind to pawn changes
-		OwningPC->OnPossessedPawnChanged.RemoveDynamic(this, &ThisClass::HandlePossessedPawnChanged);
-		OwningPC->OnPossessedPawnChanged.AddDynamic(this, &ThisClass::HandlePossessedPawnChanged);
+			UE_LOG(LogEquipmentVisual, Warning,
+				TEXT("[EquipComp BeginPlay] Resolved mesh from Character: %s"),
+				*GetNameSafe(M));
+		}
+		else
+		{
+			UE_LOG(LogEquipmentVisual, Warning,
+				TEXT("[EquipComp BeginPlay] Owner is not ACharacter, cannot auto-resolve mesh"));
+		}
 	}
-
-	// 3) If you want visuals to appear when opening PIE / after moving comp, replay:
-	RebuildAllEquippedVisuals();
-}
-
-void UInvEquipmentComponent::HandlePossessedPawnChanged(APawn* OldPawn, APawn* NewPawn)
-{
-	UE_LOG(LogEquipmentVisual, Warning,
-		TEXT("[EquipComp] PossessedPawnChanged Old=%s New=%s"),
-		*GetNameSafe(OldPawn),
-		*GetNameSafe(NewPawn));
-
-	ResolveMeshFromPawn(NewPawn);
-
-	// Re-attach everything to new mesh
-	RebuildAllEquippedVisuals();
-}
-
-void UInvEquipmentComponent::ResolveMeshFromPawn(APawn* Pawn)
-{
-	OwningSkeletalMesh = nullptr;
-
-	ACharacter* C = Cast<ACharacter>(Pawn);
-	if (!IsValid(C))
-	{
-		UE_LOG(LogEquipmentVisual, Warning, TEXT("[EquipComp] ResolveMeshFromPawn: Pawn is not Character"));
-		return;
-	}
-
-	USkeletalMeshComponent* M = C->GetMesh();
-	OwningSkeletalMesh = M;
-
-	UE_LOG(LogEquipmentVisual, Warning,
-		TEXT("[EquipComp] Resolved mesh from Pawn: %s"),
-		*GetNameSafe(M));
 }
 
 UInventoryComponent* UInvEquipmentComponent::ResolvePlayerInventory() const
 {
-	// PC-owned now: no GetPlayerController(0)
-	APlayerController* PC = Cast<APlayerController>(GetOwner());
+	UWorld* W = GetWorld();
+	if (!W) return nullptr;
+
+	APlayerController* PC = UGameplayStatics::GetPlayerController(W, 0);
 	if (!IsValid(PC)) return nullptr;
 
 	return PC->FindComponentByClass<UInventoryComponent>();
@@ -99,13 +73,17 @@ void UInvEquipmentComponent::InitInventoryComponent()
 
 	if (!InventoryComponent.IsValid()) return;
 
-	InventoryComponent->OnItemEquipped.RemoveAll(this);
-	InventoryComponent->OnItemUnequipped.RemoveAll(this);
+	if (!InventoryComponent->OnItemEquipped.IsAlreadyBound(this, &ThisClass::OnItemEquipped))
+	{
+		InventoryComponent->OnItemEquipped.AddDynamic(this, &ThisClass::OnItemEquipped);
+		UE_LOG(LogEquipmentVisual, Warning, TEXT("[InitInventoryComponent] Bound OnItemEquipped"));
+	}
 
-	InventoryComponent->OnItemEquipped.AddDynamic(this, &ThisClass::OnItemEquipped);
-	InventoryComponent->OnItemUnequipped.AddDynamic(this, &ThisClass::OnItemUnequipped);
-
-	UE_LOG(LogEquipmentVisual, Warning, TEXT("[InitInventoryComponent] Bound equip delegates"));
+	if (!InventoryComponent->OnItemUnequipped.IsAlreadyBound(this, &ThisClass::OnItemUnequipped))
+	{
+		InventoryComponent->OnItemUnequipped.AddDynamic(this, &ThisClass::OnItemUnequipped);
+		UE_LOG(LogEquipmentVisual, Warning, TEXT("[InitInventoryComponent] Bound OnItemUnequipped"));
+	}
 }
 
 AInvEquipActor* UInvEquipmentComponent::FindEquippedActor(const FGameplayTag& EquipSlotTag) const
@@ -131,117 +109,166 @@ void UInvEquipmentComponent::RemoveEquippedActor(const FGameplayTag& EquipSlotTa
 	}
 }
 
-void UInvEquipmentComponent::RebuildAllEquippedVisuals()
-{
-	// Safe “replay” after pawn changes / begin play.
-	// Requires you to know which slot tags exist.
-	// If your InventoryComponent has EquippedItems array, iterate it instead (recommended).
-
-	if (!InventoryComponent.IsValid())
-	{
-		UE_LOG(LogEquipmentVisual, Warning, TEXT("[RebuildAllEquippedVisuals] InventoryComponent invalid"));
-		return;
-	}
-
-	if (!OwningSkeletalMesh.IsValid())
-	{
-		UE_LOG(LogEquipmentVisual, Warning, TEXT("[RebuildAllEquippedVisuals] Mesh invalid"));
-		return;
-	}
-
-	// Clear any spawned visuals (optional; avoids duplicates)
-	for (AInvEquipActor* A : EquippedActors)
-	{
-		if (IsValid(A)) A->Destroy();
-	}
-	EquippedActors.Reset();
-
-	// === OPTION 1 (best): iterate EquippedItems array if you have it
-	// Example if you add:
-	// const TArray<FEquippedItemEntry>& UInventoryComponent::GetEquippedItems() const;
-	//
-	// for (const FEquippedItemEntry& E : InventoryComponent->GetEquippedItems())
-	// {
-	//     if (E.EquipSlotTag.IsValid() && !E.ItemID.IsNone())
-	//     {
-	//         OnItemEquipped(E.EquipSlotTag, E.ItemID);
-	//     }
-	// }
-
-	// === OPTION 2: if you only have GetEquippedItem(tag,...), you must have a known slot list somewhere.
-	// (Skipping here to avoid inventing your tag set.)
-}
-
 void UInvEquipmentComponent::OnItemEquipped(FGameplayTag EquipSlotTag, FName ItemID)
 {
 	UE_LOG(LogEquipmentVisual, Warning,
-		TEXT("[OnItemEquipped] SlotTag=%s ItemID=%s Owner(PC)=%s Pawn=%s"),
+		TEXT("[OnItemEquipped] SlotTag=%s ItemID=%s Owner=%s"),
 		*EquipSlotTag.ToString(),
 		*ItemID.ToString(),
-		*GetNameSafe(GetOwner()),
-		OwningPC.IsValid() ? *GetNameSafe(OwningPC->GetPawn()) : TEXT("None"));
+		*GetNameSafe(GetOwner()));
 
-	if (!EquipSlotTag.IsValid() || ItemID.IsNone()) return;
-	if (!InventoryComponent.IsValid()) return;
+	// ---- basic gates
+	if (!EquipSlotTag.IsValid() || ItemID.IsNone())
+	{
+		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> BAD INPUT SlotTagValid=%d ItemIDNone=%d"),
+			EquipSlotTag.IsValid() ? 1 : 0,
+			ItemID.IsNone() ? 1 : 0);
+		return;
+	}
+
+	if (!InventoryComponent.IsValid())
+	{
+		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> InventoryComponent INVALID"));
+		return;
+	}
+
 	if (!OwningSkeletalMesh.IsValid())
 	{
-		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> Mesh invalid (pawn not resolved yet?)"));
-		return;
-	}
-
-	FItemRow Row;
-	if (!InventoryComponent->TryGetItemDef(ItemID, Row))
-	{
-		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> TryGetItemDef FAILED for %s"), *ItemID.ToString());
-		return;
-	}
-
-	if (Row.EquipActorClass.IsNull())
-	{
-		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> EquipActorClass NULL in row for %s"), *ItemID.ToString());
-		return;
-	}
-
-	RemoveEquippedActor(EquipSlotTag);
-
-	TSubclassOf<AInvEquipActor> EquipClass = Row.EquipActorClass.LoadSynchronous();
-	if (!EquipClass)
-	{
-		UE_LOG(LogEquipmentVisual, Error, TEXT("  -> LoadSynchronous FAILED for %s"), *Row.EquipActorClass.ToString());
+		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> OwningSkeletalMesh INVALID"));
 		return;
 	}
 
 	UWorld* World = GetWorld();
-	if (!World) return;
+	if (!World)
+	{
+		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> World INVALID"));
+		return;
+	}
+
+	// ---- resolve item row
+	FItemRow Row;
+	if (!InventoryComponent->TryGetItemDef(ItemID, Row))
+	{
+		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> TryGetItemDef FAILED for ItemID=%s"), *ItemID.ToString());
+		return;
+	}
+
+	// log what we got (helps detect “wrong table/row” instantly)
+	const FSoftObjectPath SoftPath = Row.EquipActorClass.ToSoftObjectPath();
+	UE_LOG(LogEquipmentVisual, Warning,
+		TEXT("  -> Row: EquipSlotTag=%s  EquipAttachSocket=%s"),
+		*Row.EquipSlotTag.ToString(),
+		*Row.EquipAttachSocket.ToString());
+
+	UE_LOG(LogEquipmentVisual, Warning,
+		TEXT("  -> EquipActorClass: IsNull=%d IsValidPath=%d Path=%s"),
+		Row.EquipActorClass.IsNull() ? 1 : 0,
+		SoftPath.IsValid() ? 1 : 0,
+		*SoftPath.ToString());
+
+	if (Row.EquipActorClass.IsNull())
+	{
+		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> EquipActorClass is NULL in DT row"));
+		return;
+	}
+
+	// ---- replace old visual first
+	RemoveEquippedActor(EquipSlotTag);
+
+	// ---- load class (primary path)
+	TSubclassOf<AInvEquipActor> EquipClass = Row.EquipActorClass.LoadSynchronous();
+
+	// fallback load (helps when redirectors / stale paths / weird DT serialization)
+	if (!EquipClass)
+	{
+		const FString PathStr = SoftPath.ToString();
+		UE_LOG(LogEquipmentVisual, Warning,
+			TEXT("  -> LoadSynchronous FAILED, trying StaticLoadClass on path: %s"),
+			*PathStr);
+
+		if (!PathStr.IsEmpty())
+		{
+			UClass* Loaded = StaticLoadClass(AInvEquipActor::StaticClass(), nullptr, *PathStr);
+			EquipClass = Loaded;
+		}
+	}
+
+	if (!EquipClass)
+	{
+		UE_LOG(LogEquipmentVisual, Error,
+			TEXT("  -> FAILED to load EquipActorClass for ItemID=%s. SoftPath=%s"),
+			*ItemID.ToString(),
+			*SoftPath.ToString());
+		return;
+	}
 
 	USkeletalMeshComponent* Mesh = OwningSkeletalMesh.Get();
+	if (!Mesh)
+	{
+		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> Mesh NULL after IsValid??"));
+		return;
+	}
 
-	// Spawn near mesh to avoid “floor for 1 frame”
+	// ---- spawn at mesh transform to avoid “on floor for 1 frame”
 	const FTransform SpawnTM = Mesh->GetComponentTransform();
 
 	FActorSpawnParameters Params;
-	Params.Owner = OwningPC.IsValid() ? Cast<AActor>(OwningPC.Get()) : GetOwner();
+	Params.Owner = GetOwner();
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
 	AInvEquipActor* Spawned = World->SpawnActor<AInvEquipActor>(EquipClass, SpawnTM, Params);
-	if (!IsValid(Spawned)) return;
+	if (!IsValid(Spawned))
+	{
+		UE_LOG(LogEquipmentVisual, Warning, TEXT("  -> SpawnActor FAILED"));
+		return;
+	}
 
-	Spawned->SetOwner(OwningPC.IsValid() ? Cast<AActor>(OwningPC.Get()) : GetOwner());
+	Spawned->SetOwner(GetOwner());
 	Spawned->SetEquipmentType(EquipSlotTag);
 	Spawned->SetItemID(ItemID);
 
+	UE_LOG(LogEquipmentVisual, Warning,
+		TEXT("  -> Attaching to mesh=%s  Socket=%s"),
+		*GetNameSafe(Mesh),
+		*Row.EquipAttachSocket.ToString());
+
+	// ---- attach
 	const FName SocketName = Row.EquipAttachSocket;
 
-	if (SocketName != NAME_None && Mesh->DoesSocketExist(SocketName))
+	if (SocketName != NAME_None)
 	{
-		Spawned->AttachToComponent(Mesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, SocketName);
+		const bool bSocketExists = Mesh->DoesSocketExist(SocketName);
+		UE_LOG(LogEquipmentVisual, Warning,
+			TEXT("  -> SocketExists=%d"),
+			bSocketExists ? 1 : 0);
+
+		if (bSocketExists)
+		{
+			Spawned->AttachToComponent(
+				Mesh,
+				FAttachmentTransformRules::SnapToTargetNotIncludingScale,
+				SocketName
+			);
+		}
+		else
+		{
+			// socket requested but missing -> fallback to root attach
+			Spawned->AttachToComponent(
+				Mesh,
+				FAttachmentTransformRules::SnapToTargetNotIncludingScale
+			);
+		}
 	}
 	else
 	{
-		// root attach (cloak case)
-		Spawned->AttachToComponent(Mesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+		// no socket -> root attach (your “cloak” case)
+		Spawned->AttachToComponent(
+			Mesh,
+			FAttachmentTransformRules::SnapToTargetNotIncludingScale
+		);
 	}
 
+	// ---- enforce clean relative after attach (prevents “kept spawn offset” cases)
 	Spawned->SetActorRelativeLocation(FVector::ZeroVector);
 	Spawned->SetActorRelativeRotation(FRotator::ZeroRotator);
 	Spawned->SetActorRelativeScale3D(FVector::OneVector);
@@ -249,33 +276,14 @@ void UInvEquipmentComponent::OnItemEquipped(FGameplayTag EquipSlotTag, FName Ite
 	EquippedActors.Add(Spawned);
 
 	UE_LOG(LogEquipmentVisual, Warning,
-		TEXT("  -> OK Attached Socket=%s WorldLoc=%s"),
+		TEXT("  -> OK Attached. ParentSocket=%s WorldLoc=%s"),
 		*Spawned->GetAttachParentSocketName().ToString(),
 		*Spawned->GetActorLocation().ToString());
 }
 
+
 void UInvEquipmentComponent::OnItemUnequipped(FGameplayTag EquipSlotTag, FName ItemID)
 {
-	UE_LOG(LogEquipmentVisual, Warning,
-		TEXT("[OnItemUnequipped] SlotTag=%s ItemID=%s"),
-		*EquipSlotTag.ToString(),
-		*ItemID.ToString());
-
 	if (!EquipSlotTag.IsValid()) return;
 	RemoveEquippedActor(EquipSlotTag);
-}
-
-TArray<AInvEquipActor*> UInvEquipmentComponent::GetEquippedActorsCopy() const
-{
-	TArray<AInvEquipActor*> Out;
-	Out.Reserve(EquippedActors.Num());
-
-	for (AInvEquipActor* A : EquippedActors)
-	{
-		if (IsValid(A))
-		{
-			Out.Add(A);
-		}
-	}
-	return Out;
 }
