@@ -42,6 +42,17 @@ struct FInvAttributeMod
 	float Magnitude = 0.f;
 };
 
+USTRUCT(BlueprintType)
+struct FInvPeriodicMod
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly) FGameplayTag EffectTag;     // Effect.Regen.Small
+	UPROPERTY(EditAnywhere, BlueprintReadOnly) FGameplayTag AttributeTag;  // Attr.Health
+	UPROPERTY(EditAnywhere, BlueprintReadOnly) float DeltaPerTurn = 0.f;   // +5
+	UPROPERTY(EditAnywhere, BlueprintReadOnly) int32 NumTurns = 0;         // 3
+};
+
 /**
  * Single source of truth row (DataTable).
  * Key this DataTable by ItemID (RowName == ItemID) for simplest lookup.
@@ -76,6 +87,9 @@ struct FItemRow : public FTableRowBase
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Equipment|Stats")
 	TArray<FInvAttributeMod> AttributeMods;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Consumable|Periodic")
+	TArray<FInvPeriodicMod> PeriodicMods;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) bool bNoDrop = false;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) bool bNoSell = false;

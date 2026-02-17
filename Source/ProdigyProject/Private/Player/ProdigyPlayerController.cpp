@@ -555,6 +555,22 @@ bool AProdigyPlayerController::ConsumeFromSlot(int32 SlotIndex, TArray<int32>& O
 	// Apply item-defined attribute deltas in AttributesComponent
 	const bool bApplied = Attr->ApplyItemAttributeModsAsCurrentDeltas(ItemMods, /*InstigatorActor*/ P);
 
+	for (const FInvPeriodicMod& PM : Row.PeriodicMods)
+	{
+		if (!PM.EffectTag.IsValid() || !PM.AttributeTag.IsValid()) continue;
+		if (PM.NumTurns <= 0 || FMath::IsNearlyZero(PM.DeltaPerTurn)) continue;
+
+		Attr->AddOrRefreshTurnEffect(
+			PM.EffectTag,
+			PM.AttributeTag,
+			PM.DeltaPerTurn,
+			PM.NumTurns,
+			/*Instigator*/ P,
+			/*Refresh*/ true,
+			/*Stack*/ false
+		);
+	}
+
 	UE_LOG(LogTemp, Warning, TEXT("[Consume] Applied=%d ItemID=%s Mods=%d"),
 	       bApplied ? 1 : 0, *ItemID.ToString(), ItemMods.Num());
 

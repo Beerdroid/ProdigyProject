@@ -50,6 +50,27 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(
 	AActor*, InstigatorActor
 );
 
+USTRUCT(BlueprintType)
+struct FPeriodicTurnEffect
+{
+	GENERATED_BODY()
+
+	// Identity / grouping (Poison, Regen, Bleed...)
+	UPROPERTY() FGameplayTag EffectTag;
+
+	// What resource is affected (Attr.Health, Attr.AP, Attr.Mana...)
+	UPROPERTY() FGameplayTag AttributeTag;
+
+	// Signed delta applied each tick (negative=DoT, positive=HoT)
+	UPROPERTY() float DeltaPerTurn = 0.f;
+
+	// Exact remaining ticks
+	UPROPERTY() int32 TurnsRemaining = 0;
+
+	// Who applied it (for logs / later dispel rules)
+	UPROPERTY() TWeakObjectPtr<AActor> InstigatorActor;
+};
+
 /**
  * Simple tag-addressed attribute storage.
  * - No replication (per your requirement).
@@ -107,6 +128,22 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Attributes|Mods")
 	bool ApplyItemAttributeModsAsCurrentDeltas(const TArray<FAttributeMod>& ItemMods, AActor* InstigatorActor);
 
+	UFUNCTION(BlueprintCallable, Category="Attributes|TurnEffects")
+	bool AddOrRefreshTurnEffect(
+		const FGameplayTag& EffectTag,
+		const FGameplayTag& AttributeTag,
+		float DeltaPerTurn,
+		int32 NumTurns,
+		AActor* InstigatorActor,
+		bool bRefreshDuration = true,
+		bool bStackMagnitude = false);
+	
+	UFUNCTION(BlueprintCallable, Category="Attributes|Periodic")
+	void TickTurnEffects(AActor* OwnerTurnActor);
+
+	// Optional utility
+	UFUNCTION(BlueprintCallable, Category="Attributes|Periodic")
+	void ClearTurnEffect(FGameplayTag EffectTag);
 
 protected:
 	virtual void BeginPlay() override;
@@ -114,7 +151,12 @@ protected:
 private:
 	UPROPERTY(Transient)
 	bool bDefaultsInitialized = false;
-	
+
+	UPROPERTY()
+	TArray<FPeriodicTurnEffect> TurnEffects;
+
+	int32 FindTurnEffectIndex(const FGameplayTag& EffectTag, const FGameplayTag& AttributeTag) const;
+
 	// Internal map for O(1) access at runtime (built from DefaultAttributes)
 	UPROPERTY(Transient)
 	TMap<FGameplayTag, FAttributeEntry> AttributeMap;

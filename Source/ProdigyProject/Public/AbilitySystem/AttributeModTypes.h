@@ -26,3 +26,14 @@ struct FAttributeMod
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Attributes")
 	float Magnitude = 0.f;
 };
+
+USTRUCT(BlueprintType)
+struct FPeriodicMod
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly) FGameplayTag EffectTag;     // Effect.Regen.Small
+	UPROPERTY(EditAnywhere, BlueprintReadOnly) FGameplayTag AttributeTag;  // Attr.Health
+	UPROPERTY(EditAnywhere, BlueprintReadOnly) float DeltaPerTurn = 0.f;   // +5
+	UPROPERTY(EditAnywhere, BlueprintReadOnly) int32 NumTurns = 0;         // 3
+};

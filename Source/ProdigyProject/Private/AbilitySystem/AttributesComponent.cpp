@@ -15,6 +15,21 @@ void UAttributesComponent::BeginPlay()
 	BuildMapFromDefaults();
 }
 
+int32 UAttributesComponent::FindTurnEffectIndex(const FGameplayTag& EffectTag, const FGameplayTag& AttributeTag) const
+{
+	if (!EffectTag.IsValid() || !AttributeTag.IsValid()) return INDEX_NONE;
+
+	for (int32 i = 0; i < TurnEffects.Num(); ++i)
+	{
+		const FPeriodicTurnEffect& E = TurnEffects[i];
+		if (E.EffectTag.MatchesTagExact(EffectTag) && E.AttributeTag.MatchesTagExact(AttributeTag))
+		{
+			return i;
+		}
+	}
+	return INDEX_NONE;
+}
+
 void UAttributesComponent::AppendDefaultsToMap(const TArray<FAttributeEntry>& InDefaults)
 {
 	for (const FAttributeEntry& E : InDefaults)
@@ -406,4 +421,141 @@ void UAttributesComponent::ClampResourcesIfNeeded(UObject* InstigatorSource)
 	}
 }
 
+bool UAttributesComponent::AddOrRefreshTurnEffect(
+	const FGameplayTag& EffectTag,
+	const FGameplayTag& AttributeTag,
+	float DeltaPerTurn,
+	int32 NumTurns,
+	AActor* InstigatorActor,
+	bool bRefreshDuration,
+	bool bStackMagnitude)
+{
+	if (!EffectTag.IsValid() || !AttributeTag.IsValid()) return false;
+	if (NumTurns <= 0) return false;
+	if (FMath::IsNearlyZero(DeltaPerTurn)) return false;
 
+	// No magic: must be a known attribute from your AttributeSet->DefaultAttributes (i.e., AttributeMap)
+	if (!HasAttribute(AttributeTag))
+	{
+		UE_LOG(LogAttributes, Warning,
+			TEXT("[TurnEffect] Missing attribute %s on %s (Effect=%s)"),
+			*AttributeTag.ToString(), *GetNameSafe(GetOwner()), *EffectTag.ToString());
+		return false;
+	}
+
+	const int32 Idx = FindTurnEffectIndex(EffectTag, AttributeTag);
+	if (Idx != INDEX_NONE)
+	{
+		FPeriodicTurnEffect& E = TurnEffects[Idx];
+
+		if (bRefreshDuration)
+		{
+			// “Refresh” normally means set/extend duration
+			E.TurnsRemaining = FMath::Max(E.TurnsRemaining, NumTurns);
+		}
+
+		if (bStackMagnitude)
+		{
+			E.DeltaPerTurn += DeltaPerTurn;
+		}
+		else
+		{
+			E.DeltaPerTurn = DeltaPerTurn;
+		}
+
+		E.InstigatorActor = InstigatorActor;
+
+		UE_LOG(LogAttributes, Warning,
+			TEXT("[TurnEffect] Refresh Effect=%s Attr=%s Delta=%.2f Turns=%d Owner=%s"),
+			*EffectTag.ToString(), *AttributeTag.ToString(), E.DeltaPerTurn, E.TurnsRemaining, *GetNameSafe(GetOwner()));
+
+		return true;
+	}
+
+	FPeriodicTurnEffect NewE;
+	NewE.EffectTag = EffectTag;
+	NewE.AttributeTag = AttributeTag;
+	NewE.DeltaPerTurn = DeltaPerTurn;
+	NewE.TurnsRemaining = NumTurns;
+	NewE.InstigatorActor = InstigatorActor;
+
+	TurnEffects.Add(NewE);
+
+	UE_LOG(LogAttributes, Warning,
+		TEXT("[TurnEffect] Add Effect=%s Attr=%s Delta=%.2f Turns=%d Owner=%s"),
+		*EffectTag.ToString(), *AttributeTag.ToString(), DeltaPerTurn, NumTurns, *GetNameSafe(GetOwner()));
+
+	return true;
+}
+
+void UAttributesComponent::TickTurnEffects(AActor* OwnerTurnActor)
+{
+	if (TurnEffects.Num() == 0) return;
+
+	// Tick reverse to allow RemoveAtSwap
+	for (int32 i = TurnEffects.Num() - 1; i >= 0; --i)
+	{
+		FPeriodicTurnEffect& E = TurnEffects[i];
+
+		// Purge invalid/expired entries
+		if (!E.EffectTag.IsValid() || !E.AttributeTag.IsValid() || E.TurnsRemaining <= 0 || FMath::IsNearlyZero(E.DeltaPerTurn))
+		{
+			TurnEffects.RemoveAtSwap(i);
+			continue;
+		}
+
+		// Attribute must still exist
+		if (!HasAttribute(E.AttributeTag))
+		{
+			UE_LOG(LogAttributes, Warning,
+				TEXT("[TurnEffect] Remove (attr missing) Effect=%s Attr=%s Owner=%s"),
+				*E.EffectTag.ToString(), *E.AttributeTag.ToString(), *GetNameSafe(GetOwner()));
+			TurnEffects.RemoveAtSwap(i);
+			continue;
+		}
+
+		const float OldCur = GetCurrentValue(E.AttributeTag);
+
+		// IMPORTANT: instigator for logs/rules = whoever is acting this turn (owner), not who applied it
+		// But you still keep E.InstigatorActor stored for future “dispel by source” rules.
+		const bool bOk = ModifyCurrentValue(E.AttributeTag, E.DeltaPerTurn, OwnerTurnActor);
+		const float NewCur = GetCurrentValue(E.AttributeTag);
+
+		UE_LOG(LogAttributes, Warning,
+			TEXT("[TurnEffect] Tick Effect=%s Attr=%s %.2f -> %.2f (Delta=%.2f) TurnsLeft(before)=%d Ok=%d Owner=%s"),
+			*E.EffectTag.ToString(),
+			*E.AttributeTag.ToString(),
+			OldCur, NewCur,
+			E.DeltaPerTurn,
+			E.TurnsRemaining,
+			bOk ? 1 : 0,
+			*GetNameSafe(GetOwner()));
+
+		// Your existing resource clamp (Health->MaxHealth, Mana->MaxMana etc. via DA ResourcePairs)
+		ClampResourcesIfNeeded(OwnerTurnActor);
+
+		// Decrement and expire
+		E.TurnsRemaining -= 1;
+		if (E.TurnsRemaining <= 0)
+		{
+			UE_LOG(LogAttributes, Warning,
+				TEXT("[TurnEffect] Expired Effect=%s Attr=%s Owner=%s"),
+				*E.EffectTag.ToString(), *E.AttributeTag.ToString(), *GetNameSafe(GetOwner()));
+
+			TurnEffects.RemoveAtSwap(i);
+		}
+	}
+}
+
+void UAttributesComponent::ClearTurnEffect(FGameplayTag EffectTag)
+{
+	if (!EffectTag.IsValid()) return;
+
+	for (int32 i = TurnEffects.Num() - 1; i >= 0; --i)
+	{
+		if (TurnEffects[i].EffectTag.MatchesTagExact(EffectTag))
+		{
+			TurnEffects.RemoveAtSwap(i);
+		}
+	}
+}
