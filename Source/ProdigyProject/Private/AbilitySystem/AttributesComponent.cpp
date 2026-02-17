@@ -1,6 +1,7 @@
 ﻿#include "AbilitySystem/AttributesComponent.h"
 
 #include "AbilitySystem/ActionComponent.h"
+#include "AbilitySystem/AttributeSetDataAsset.h"
 #include "AbilitySystem/ProdigyGameplayTags.h"
 
 UAttributesComponent::UAttributesComponent()
@@ -14,17 +15,75 @@ void UAttributesComponent::BeginPlay()
 	BuildMapFromDefaults();
 }
 
-void UAttributesComponent::BuildMapFromDefaults()
+void UAttributesComponent::AppendDefaultsToMap(const TArray<FAttributeEntry>& InDefaults)
 {
-	AttributeMap.Reset();
-
-	for (const FAttributeEntry& E : DefaultAttributes)
+	for (const FAttributeEntry& E : InDefaults)
 	{
 		if (!E.AttributeTag.IsValid()) continue;
 
-		// Last wins if duplicates exist (intentional, to allow BP overrides)
+		// Last wins (intentional) to allow overrides in the SAME source
 		AttributeMap.Add(E.AttributeTag, E);
 	}
+}
+
+void UAttributesComponent::AppendDefaultsToMap_KeepCurrent(const TArray<FAttributeEntry>& InDefaults)
+{
+	for (const FAttributeEntry& D : InDefaults)
+	{
+		if (!D.AttributeTag.IsValid()) continue;
+
+		if (FAttributeEntry* Existing = AttributeMap.Find(D.AttributeTag))
+		{
+			// Refresh base from data (balance changes, etc.) but KEEP runtime current.
+			Existing->BaseValue = D.BaseValue;
+
+			// Optional: if you want DA to ever force current, you need a flag in FAttributeEntry.
+			continue;
+		}
+
+		// New attribute -> initialize Current from Base (first time only)
+		FAttributeEntry NewE = D;
+		NewE.CurrentValue = NewE.BaseValue;
+
+		AttributeMap.Add(NewE.AttributeTag, NewE);
+	}
+}
+
+void UAttributesComponent::BuildMapFromDefaults()
+{
+	if (!IsValid(AttributeSet))
+	{
+		UE_LOG(LogAttributes, Error,
+			TEXT("BuildMapFromDefaults FAILED: AttributeSet is null on %s (Owner=%s)"),
+			*GetNameSafe(this),
+			*GetNameSafe(GetOwner()));
+		return;
+	}
+
+	if (bDefaultsInitialized)
+	{
+		UE_LOG(LogAttributes, Verbose,
+			TEXT("BuildMapFromDefaults SKIP: already initialized Comp=%s (%p) Owner=%s MapNum=%d"),
+			*GetNameSafe(this), this, *GetNameSafe(GetOwner()), AttributeMap.Num());
+		return;
+	}
+
+	AttributeMap.Reset();
+	AppendDefaultsToMap_KeepCurrent(AttributeSet->DefaultAttributes);
+
+	// initialize Current from Base on first init (if that’s your policy)
+	for (auto& Pair : AttributeMap)
+	{
+		Pair.Value.CurrentValue = Pair.Value.BaseValue;
+	}
+
+	bDefaultsInitialized = true;
+
+	UE_LOG(LogAttributes, Log,
+		TEXT("BuildMapFromDefaults OK: Owner=%s merged %d attributes from %s (FirstInit=1)"),
+		*GetNameSafe(GetOwner()),
+		AttributeMap.Num(),
+		*GetNameSafe(AttributeSet));
 }
 
 bool UAttributesComponent::HasAttribute(FGameplayTag AttributeTag) const
@@ -236,8 +295,6 @@ void UAttributesComponent::ClearModsForSource(UObject* Source, UObject* Instigat
 bool UAttributesComponent::ApplyItemAttributeModsAsCurrentDeltas(const TArray<FAttributeMod>& ItemMods,
 	AActor* InstigatorActor)
 {
-	// For consume/potions/etc. we treat item mods as CURRENT deltas (runtime effects).
-	// This intentionally does NOT touch BaseValue.
 	if (ItemMods.Num() == 0) return true;
 
 	bool bAppliedAny = false;
@@ -246,34 +303,48 @@ bool UAttributesComponent::ApplyItemAttributeModsAsCurrentDeltas(const TArray<FA
 	{
 		if (!M.AttributeTag.IsValid()) continue;
 
-		// For now: only "Add" makes sense as "delta to current"
+		// Consume/potion policy: only Add works as "delta to current"
 		if (M.Op != EAttrModOp::Add)
 		{
-			UE_LOG(LogAttributes, Warning, TEXT("[ConsumeMods] Skipping non-Add mod Tag=%s Op=%d Mag=%.2f"),
+			UE_LOG(LogAttributes, Warning,
+				TEXT("[ConsumeMods] Skipping non-Add mod Tag=%s Op=%d Mag=%.2f"),
 				*M.AttributeTag.ToString(), (int32)M.Op, M.Magnitude);
 			continue;
 		}
 
-		// No magic: attribute must exist in DefaultAttributes
+		// No magic: attribute must exist in the set
 		if (!HasAttribute(M.AttributeTag))
 		{
-			UE_LOG(LogAttributes, Warning, TEXT("[ConsumeMods] Missing attribute Tag=%s on %s"),
+			UE_LOG(LogAttributes, Warning,
+				TEXT("[ConsumeMods] Missing attribute Tag=%s on %s"),
 				*M.AttributeTag.ToString(), *GetNameSafe(GetOwner()));
+			continue;
+		}
+
+		if (FMath::IsNearlyZero(M.Magnitude))
+		{
+			UE_LOG(LogAttributes, Verbose,
+				TEXT("[ConsumeMods] Zero delta ignored Tag=%s"),
+				*M.AttributeTag.ToString());
 			continue;
 		}
 
 		const float OldCur = GetCurrentValue(M.AttributeTag);
 
 		const bool bOk = ModifyCurrentValue(M.AttributeTag, M.Magnitude, InstigatorActor);
+
 		const float NewCur = GetCurrentValue(M.AttributeTag);
 
-		UE_LOG(LogAttributes, Warning, TEXT("[ConsumeMods]  + Tag=%s Cur %.2f -> %.2f (Delta=%.2f) Ok=%d"),
+		UE_LOG(LogAttributes, Warning,
+			TEXT("[ConsumeMods]  + Tag=%s Cur %.2f -> %.2f (Delta=%.2f) Ok=%d"),
 			*M.AttributeTag.ToString(), OldCur, NewCur, M.Magnitude, bOk ? 1 : 0);
 
 		bAppliedAny |= bOk;
+	}
 
-		// Explicit clamp policy for resources (uses your existing ClampResourcesIfNeeded)
-		// This keeps the “MaxHealth affects Health cap” behavior consistent everywhere.
+	// Clamp once (health/ap/mana etc.) after all changes
+	if (bAppliedAny)
+	{
 		ClampResourcesIfNeeded(InstigatorActor);
 	}
 
@@ -289,65 +360,48 @@ void UAttributesComponent::ClampResourcesIfNeeded(UObject* InstigatorSource)
 {
 	AActor* InstigatorActor = Cast<AActor>(InstigatorSource);
 
-	// =========================
-	// HEALTH
-	// =========================
-	if (HasAttribute(ProdigyTags::Attr::Health))
+	// If no asset, do nothing (you can keep old hardcoded behavior if you prefer,
+	// but this version is fully data-driven).
+	if (!IsValid(AttributeSet))
 	{
-		const float MaxH = GetFinalValue(ProdigyTags::Attr::MaxHealth);
-		const float CurH = GetCurrentValue(ProdigyTags::Attr::Health);
-		const float Clamped = FMath::Clamp(CurH, 0.f, MaxH);
-
-		if (!FMath::IsNearlyEqual(CurH, Clamped))
-		{
-			UE_LOG(LogAttributes, Warning,
-				TEXT("[Clamp] %s Health %.1f -> %.1f (Max=%.1f) Inst=%s"),
-				*GetNameSafe(GetOwner()),
-				CurH,
-				Clamped,
-				MaxH,
-				*GetNameSafe(InstigatorActor));
-
-			SetCurrentValue(ProdigyTags::Attr::Health, Clamped, InstigatorActor);
-		}
-		else
-		{
-			UE_LOG(LogAttributes, Verbose,
-				TEXT("[Clamp] %s Health OK %.1f / %.1f"),
-				*GetNameSafe(GetOwner()),
-				CurH,
-				MaxH);
-		}
+		return;
 	}
 
-	// =========================
-	// AP
-	// =========================
-	if (HasAttribute(ProdigyTags::Attr::AP))
+	for (const FProdigyResourcePair& Pair : AttributeSet->ResourcePairs)
 	{
-		const float MaxAP = GetFinalValue(ProdigyTags::Attr::MaxAP);
-		const float CurAP = GetCurrentValue(ProdigyTags::Attr::AP);
-		const float Clamped = FMath::Clamp(CurAP, 0.f, MaxAP);
+		if (!Pair.CurrentTag.IsValid() || !Pair.MaxTag.IsValid()) continue;
 
-		if (!FMath::IsNearlyEqual(CurAP, Clamped))
+		// Must exist explicitly (no magic)
+		if (!HasAttribute(Pair.CurrentTag)) continue;
+		if (!HasAttribute(Pair.MaxTag)) continue;
+
+		const float MaxV = GetFinalValue(Pair.MaxTag);
+		const float CurV = GetCurrentValue(Pair.CurrentTag);
+		const float Clamped = FMath::Clamp(CurV, 0.f, MaxV);
+
+		if (!FMath::IsNearlyEqual(CurV, Clamped))
 		{
 			UE_LOG(LogAttributes, Warning,
-				TEXT("[Clamp] %s AP %.1f -> %.1f (Max=%.1f) Inst=%s"),
+				TEXT("[Clamp] %s %s %.1f -> %.1f (Max(%s)=%.1f) Inst=%s"),
 				*GetNameSafe(GetOwner()),
-				CurAP,
+				*Pair.CurrentTag.ToString(),
+				CurV,
 				Clamped,
-				MaxAP,
+				*Pair.MaxTag.ToString(),
+				MaxV,
 				*GetNameSafe(InstigatorActor));
 
-			SetCurrentValue(ProdigyTags::Attr::AP, Clamped, InstigatorActor);
+			// Keep your existing broadcast behavior
+			SetCurrentValue(Pair.CurrentTag, Clamped, InstigatorActor);
 		}
 		else
 		{
 			UE_LOG(LogAttributes, Verbose,
-				TEXT("[Clamp] %s AP OK %.1f / %.1f"),
+				TEXT("[Clamp] %s %s OK %.1f / %.1f"),
 				*GetNameSafe(GetOwner()),
-				CurAP,
-				MaxAP);
+				*Pair.CurrentTag.ToString(),
+				CurV,
+				MaxV);
 		}
 	}
 }

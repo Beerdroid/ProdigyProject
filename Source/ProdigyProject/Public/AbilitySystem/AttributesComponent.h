@@ -6,6 +6,7 @@
 #include "GameplayTagContainer.h"
 #include "AttributesComponent.generated.h"
 
+class UAttributeSetDataAsset;
 DEFINE_LOG_CATEGORY_STATIC(LogAttributes, Log, All);
 
 USTRUCT(BlueprintType)
@@ -62,9 +63,8 @@ class PRODIGYPROJECT_API UAttributesComponent : public UActorComponent
 public:
 	UAttributesComponent();
 
-	// Initial attributes for this actor (set in BP defaults)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Attributes")
-	TArray<FAttributeEntry> DefaultAttributes;
+	TObjectPtr<UAttributeSetDataAsset> AttributeSet = nullptr;
 
 	// Fired whenever an attribute changes via Set/Modify
 	UPROPERTY(BlueprintAssignable, Category="Attributes")
@@ -112,9 +112,16 @@ protected:
 	virtual void BeginPlay() override;
 
 private:
+	UPROPERTY(Transient)
+	bool bDefaultsInitialized = false;
+	
 	// Internal map for O(1) access at runtime (built from DefaultAttributes)
 	UPROPERTY(Transient)
 	TMap<FGameplayTag, FAttributeEntry> AttributeMap;
+
+	void AppendDefaultsToMap(const TArray<FAttributeEntry>& InDefaults);
+
+	void AppendDefaultsToMap_KeepCurrent(const TArray<FAttributeEntry>& InDefaults);
 
 	// Source -> mods
 	UPROPERTY(Transient)

@@ -460,7 +460,7 @@ void AProdigyPlayerController::HandleItemEquipped(FGameplayTag EquipSlotTag, FNa
 	UObject* Source = GetOrCreateEquipSource(EquipSlotTag);
 	if (!IsValid(Source)) return;
 
-	Attr->SetModsForSource(Source, Mods, this);
+	Attr->SetModsForSource(Source, Mods, GetPawn());
 
 	UE_LOG(LogEquipMods, Warning,
 	       TEXT("[PC] After equip Slot=%s Item=%s  FinalMaxHealth=%.2f  CurHealth=%.2f  FinalHealth=%.2f"),
@@ -487,7 +487,7 @@ void AProdigyPlayerController::HandleItemUnequipped(FGameplayTag EquipSlotTag, F
 	UObject* Source = GetOrCreateEquipSource(EquipSlotTag);
 	if (!IsValid(Source)) return;
 
-	Attr->ClearModsForSource(Source, /*InstigatorSource*/ this);
+	Attr->ClearModsForSource(Source, /*InstigatorSource*/ GetPawn());
 
 	UE_LOG(LogEquipMods, Warning,
 	       TEXT("[PC] After unequip Slot=%s Item=%s  FinalMaxHealth=%.2f  CurHealth=%.2f  FinalHealth=%.2f"),
