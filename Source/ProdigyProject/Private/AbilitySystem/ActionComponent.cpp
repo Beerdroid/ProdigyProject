@@ -24,7 +24,6 @@ void UActionComponent::OnTurnBegan()
 	AActor* OwnerActor = GetOwner();
 	if (!IsValid(OwnerActor)) return;
 
-	// --- 1) Refresh AP from MaxAP (authoritative attributes) ---
 	const FGameplayTag APTag    = ProdigyTags::Attr::AP;
 	const FGameplayTag MaxAPTag = ProdigyTags::Attr::MaxAP;
 
@@ -39,29 +38,39 @@ void UActionComponent::OnTurnBegan()
 
 		if (!bHasAP || !bHasMaxAP)
 		{
-			ACTION_LOG(Error, TEXT("OnTurnBegan: missing Attr.AP or Attr.MaxAP in DefaultAttributes"));
+			ACTION_LOG(Error, TEXT("OnTurnBegan: missing Attr.AP or Attr.MaxAP in AttributeSet/AttributeMap"));
 		}
 		else
 		{
 			const float OldAP = IActionAgentInterface::Execute_GetAttributeCurrentValue(OwnerActor, APTag);
-			const float NewAP = IActionAgentInterface::Execute_GetAttributeCurrentValue(OwnerActor, MaxAPTag);
 
-			// Set AP = MaxAP explicitly (delta form keeps attribute broadcast consistent)
+			// IMPORTANT: MaxAP should be FINAL (base + equipment mods)
+			const float NewAP = IActionAgentInterface::Execute_GetAttributeFinalValue(OwnerActor, MaxAPTag);
+
 			const float Delta = NewAP - OldAP;
-			const bool bOk = IActionAgentInterface::Execute_ModifyAttributeCurrentValue(OwnerActor, APTag, Delta, OwnerActor);
 
-			if (!bOk)
+			if (!FMath::IsNearlyZero(Delta))
 			{
-				ACTION_LOG(Error, TEXT("OnTurnBegan: failed to refresh AP (modify returned false)"));
+				const bool bOk = IActionAgentInterface::Execute_ModifyAttributeCurrentValue(
+					OwnerActor, APTag, Delta, OwnerActor);
+
+				if (!bOk)
+				{
+					ACTION_LOG(Error, TEXT("OnTurnBegan: failed to refresh AP (modify returned false)"));
+				}
+				else
+				{
+					ACTION_LOG(Log, TEXT("OnTurnBegan: AP refresh %.0f -> %.0f"), OldAP, NewAP);
+				}
 			}
 			else
 			{
-				ACTION_LOG(Log, TEXT("OnTurnBegan: AP refresh %.0f -> %.0f"), OldAP, NewAP);
+				ACTION_LOG(Verbose, TEXT("OnTurnBegan: AP already at MaxAP %.0f"), NewAP);
 			}
 		}
 	}
 
-	// --- 2) Decrement combat cooldowns at start of owner's own turn ---
+	// --- decrement combat cooldowns ---
 	for (auto& KVP : Cooldowns)
 	{
 		FActionCooldownState& S = KVP.Value;
@@ -69,6 +78,11 @@ void UActionComponent::OnTurnBegan()
 		{
 			--S.TurnsRemaining;
 		}
+	}
+
+	if (UAttributesComponent* Attr = OwnerActor->FindComponentByClass<UAttributesComponent>())
+	{
+		Attr->TickTurnEffects(OwnerActor);
 	}
 
 	ACTION_LOG(Log, TEXT("OnTurnBegan: cooldown turns decremented"));

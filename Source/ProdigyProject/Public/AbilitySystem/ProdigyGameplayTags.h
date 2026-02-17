@@ -85,3 +85,11 @@ namespace ActionCueTags
 	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Cue_Action_Miss);
 
 }
+
+namespace ProdigyTags::Effect
+{
+	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Burning);
+	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Regeneration);
+	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Poison);
+	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Bleed);
+}

@@ -351,8 +351,8 @@ void UGridSlotWidget::NativeOnMouseEnter(const FGeometry& InGeometry, const FPoi
 {
 	Super::NativeOnMouseEnter(InGeometry, InMouseEvent);
 
-	UE_LOG(LogTemp, Warning, TEXT("MouseEnter slot=%d empty=%d OwnerMenu=%s vis=%d"),
-	       SlotIndex, CachedView.bEmpty ? 1 : 0, *GetNameSafe(OwnerMenu.Get()), (int32)GetVisibility());
+	// UE_LOG(LogTemp, Warning, TEXT("MouseEnter slot=%d empty=%d OwnerMenu=%s vis=%d"),
+	//        SlotIndex, CachedView.bEmpty ? 1 : 0, *GetNameSafe(OwnerMenu.Get()), (int32)GetVisibility());
 
 	if (CachedView.bEmpty) return;
 
@@ -366,7 +366,7 @@ void UGridSlotWidget::NativeOnMouseLeave(const FPointerEvent& InMouseEvent)
 {
 	Super::NativeOnMouseLeave(InMouseEvent);
 
-	UE_LOG(LogTemp, Warning, TEXT("MouseLeave slot=%d OwnerMenu=%s"), SlotIndex, *GetNameSafe(OwnerMenu.Get()));
+	// UE_LOG(LogTemp, Warning, TEXT("MouseLeave slot=%d OwnerMenu=%s"), SlotIndex, *GetNameSafe(OwnerMenu.Get()));
 
 	if (OwnerMenu.IsValid())
 	{

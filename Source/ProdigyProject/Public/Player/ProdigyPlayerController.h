@@ -9,6 +9,8 @@
 #include "Quest/Interfaces/QuestInventoryProvider.h"
 #include "ProdigyPlayerController.generated.h"
 
+class UEquipModSource;
+class UAttributesComponent;
 class UCombatSubsystem;
 class UQuestLogComponent;
 class UQuestIntegrationComponent;
@@ -30,7 +32,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
-
+	
 	virtual bool HandlePrimaryClickActor(AActor* ClickedActor) override;
 	
 public:
@@ -90,6 +92,18 @@ public:
 
 	virtual AActor* GetActorUnderCursorForClick() const override;
 
+	UFUNCTION()
+	void HandlePossessedPawnChanged(APawn* PreviousPawn, APawn* NewPawn);
+
+	// Inventory delegates
+	UFUNCTION()
+	void HandleItemEquipped(FGameplayTag EquipSlotTag, FName ItemID);
+
+	UFUNCTION()
+	void HandleItemUnequipped(FGameplayTag EquipSlotTag, FName ItemID);
+
+	virtual bool ConsumeFromSlot(int32 SlotIndex, TArray<int32>& OutChanged) override;
+
 protected:
 	// Add in BP child if you prefer; these will auto-find if present.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Quest")
@@ -105,5 +119,31 @@ protected:
 	TEnumAsByte<ECollisionChannel> TargetTraceChannel = ECC_Visibility;
 
 private:
-	void CacheQuestComponents();
+	void CacheComponents();
+
+	UAttributesComponent* ResolveAttributesFromPawn(APawn* OwnPawn) const;
+
+	void BindInventoryDelegates();
+	void ReapplyAllEquipmentMods(); // called on pawn change + initial
+
+	UObject* GetOrCreateEquipSource(FGameplayTag SlotTag);
+
+	// cached refs
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UInventoryComponent> Inventory;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UAttributesComponent> Attributes;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UInvEquipmentComponent> EquipmentComp;
+
+	// per-slot mod sources
+	UPROPERTY(Transient)
+	TMap<FGameplayTag, TObjectPtr<UEquipModSource>> EquipSources;
+
+	void ClearAllEquipSources(UAttributesComponent* Attr);
+
+	UPROPERTY(Transient)
+	TMap<FGameplayTag, TObjectPtr<UObject>> EquipModSources;
 };

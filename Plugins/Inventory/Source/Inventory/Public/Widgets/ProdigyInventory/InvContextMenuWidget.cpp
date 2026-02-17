@@ -76,7 +76,7 @@ void UInvContextMenuWidget::Action_ConsumeOne()
 
 	// Only player inventory consumes (optional policy)
 	TArray<int32> Changed;
-	PC->Player_ConsumeOne(SlotIndex, Changed);
+	PC->ConsumeFromSlot(SlotIndex, Changed);
 	Close();
 }
 
