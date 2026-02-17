@@ -138,6 +138,15 @@ protected:
 	TObjectPtr<UEquipSlotWidget> EquipSlot_Cloak = nullptr;
 
 	UPROPERTY(meta=(BindWidgetOptional))
+	TObjectPtr<UEquipSlotWidget> EquipSlot_Hands = nullptr;
+
+	UPROPERTY(meta=(BindWidgetOptional))
+	TObjectPtr<UEquipSlotWidget> EquipSlot_Pants = nullptr;
+
+	UPROPERTY(meta=(BindWidgetOptional))
+	TObjectPtr<UEquipSlotWidget> EquipSlot_Boots = nullptr;
+
+	UPROPERTY(meta=(BindWidgetOptional))
 	TObjectPtr<UEquipSlotWidget> EquipSlot_Weapon = nullptr;
 
 private:

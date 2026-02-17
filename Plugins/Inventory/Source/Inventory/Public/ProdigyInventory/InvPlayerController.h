@@ -109,7 +109,7 @@ public:
 
 	// ===== Optional: Use/Consume from player slot =====
 	UFUNCTION(BlueprintCallable, Category="Inventory|Actions")
-	bool Player_ConsumeOne(int32 SlotIndex, TArray<int32>& OutChanged);
+	virtual bool ConsumeFromSlot(int32 SlotIndex, TArray<int32>& OutChanged);
 
 	UPROPERTY(EditDefaultsOnly, Category = "Inventory")
 	double TraceLength;

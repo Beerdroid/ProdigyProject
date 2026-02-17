@@ -32,4 +32,7 @@ public:
 
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Action|Agent")
 	bool AddStatusTag(const FGameplayTag& StatusTag, int32 Turns, float Seconds, AActor* InstigatorActor);
+	
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Action|Agent|Attributes")
+	float GetAttributeFinalValue(FGameplayTag AttributeTag) const;
 };
