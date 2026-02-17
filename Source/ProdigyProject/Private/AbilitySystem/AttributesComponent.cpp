@@ -233,6 +233,53 @@ void UAttributesComponent::ClearModsForSource(UObject* Source, UObject* Instigat
 	ReClampAllRelevantCurrents(InstigatorSource);
 }
 
+bool UAttributesComponent::ApplyItemAttributeModsAsCurrentDeltas(const TArray<FAttributeMod>& ItemMods,
+	AActor* InstigatorActor)
+{
+	// For consume/potions/etc. we treat item mods as CURRENT deltas (runtime effects).
+	// This intentionally does NOT touch BaseValue.
+	if (ItemMods.Num() == 0) return true;
+
+	bool bAppliedAny = false;
+
+	for (const FAttributeMod& M : ItemMods)
+	{
+		if (!M.AttributeTag.IsValid()) continue;
+
+		// For now: only "Add" makes sense as "delta to current"
+		if (M.Op != EAttrModOp::Add)
+		{
+			UE_LOG(LogAttributes, Warning, TEXT("[ConsumeMods] Skipping non-Add mod Tag=%s Op=%d Mag=%.2f"),
+				*M.AttributeTag.ToString(), (int32)M.Op, M.Magnitude);
+			continue;
+		}
+
+		// No magic: attribute must exist in DefaultAttributes
+		if (!HasAttribute(M.AttributeTag))
+		{
+			UE_LOG(LogAttributes, Warning, TEXT("[ConsumeMods] Missing attribute Tag=%s on %s"),
+				*M.AttributeTag.ToString(), *GetNameSafe(GetOwner()));
+			continue;
+		}
+
+		const float OldCur = GetCurrentValue(M.AttributeTag);
+
+		const bool bOk = ModifyCurrentValue(M.AttributeTag, M.Magnitude, InstigatorActor);
+		const float NewCur = GetCurrentValue(M.AttributeTag);
+
+		UE_LOG(LogAttributes, Warning, TEXT("[ConsumeMods]  + Tag=%s Cur %.2f -> %.2f (Delta=%.2f) Ok=%d"),
+			*M.AttributeTag.ToString(), OldCur, NewCur, M.Magnitude, bOk ? 1 : 0);
+
+		bAppliedAny |= bOk;
+
+		// Explicit clamp policy for resources (uses your existing ClampResourcesIfNeeded)
+		// This keeps the “MaxHealth affects Health cap” behavior consistent everywhere.
+		ClampResourcesIfNeeded(InstigatorActor);
+	}
+
+	return bAppliedAny;
+}
+
 void UAttributesComponent::ReClampAllRelevantCurrents(UObject* InstigatorSource)
 {
 	ClampResourcesIfNeeded(InstigatorSource);

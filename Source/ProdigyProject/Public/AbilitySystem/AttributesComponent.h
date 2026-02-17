@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "CoreMinimal.h"
+#include "AttributeModTypes.h"
 #include "Components/ActorComponent.h"
 #include "GameplayTagContainer.h"
 #include "AttributesComponent.generated.h"
@@ -22,28 +23,6 @@ struct FAttributeEntry
 	float CurrentValue = 0.f;
 };
 
-UENUM(BlueprintType)
-enum class EAttrModOp : uint8
-{
-	Add      UMETA(DisplayName="Add"),
-	Multiply UMETA(DisplayName="Multiply"),
-	Override UMETA(DisplayName="Override")
-};
-
-USTRUCT(BlueprintType)
-struct FAttributeMod
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Attributes")
-	FGameplayTag AttributeTag;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Attributes")
-	EAttrModOp Op = EAttrModOp::Add;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Attributes")
-	float Magnitude = 0.f;
-};
 
 USTRUCT()
 struct FAttrModSource
@@ -124,6 +103,10 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Attributes|Mods")
 	void ClearModsForSource(UObject* Source, UObject* InstigatorSource);
+
+	UFUNCTION(BlueprintCallable, Category="Attributes|Mods")
+	bool ApplyItemAttributeModsAsCurrentDeltas(const TArray<FAttributeMod>& ItemMods, AActor* InstigatorActor);
+
 
 protected:
 	virtual void BeginPlay() override;

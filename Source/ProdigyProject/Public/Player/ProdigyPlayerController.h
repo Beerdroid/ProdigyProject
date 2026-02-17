@@ -32,7 +32,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
-
+	
 	virtual bool HandlePrimaryClickActor(AActor* ClickedActor) override;
 	
 public:
@@ -102,6 +102,7 @@ public:
 	UFUNCTION()
 	void HandleItemUnequipped(FGameplayTag EquipSlotTag, FName ItemID);
 
+	virtual bool ConsumeFromSlot(int32 SlotIndex, TArray<int32>& OutChanged) override;
 
 protected:
 	// Add in BP child if you prefer; these will auto-find if present.
@@ -118,9 +119,8 @@ protected:
 	TEnumAsByte<ECollisionChannel> TargetTraceChannel = ECC_Visibility;
 
 private:
-	void CacheQuestComponents();
+	void CacheComponents();
 
-	UInventoryComponent* ResolveInventory() const;
 	UAttributesComponent* ResolveAttributesFromPawn(APawn* OwnPawn) const;
 
 	void BindInventoryDelegates();
@@ -137,8 +137,6 @@ private:
 
 	UPROPERTY(Transient)
 	TWeakObjectPtr<UInvEquipmentComponent> EquipmentComp;
-
-	bool EnsureEquipWiring();
 
 	// per-slot mod sources
 	UPROPERTY(Transient)
