@@ -91,9 +91,6 @@ void UInventoryWidgetBase::SetInventory(UInventoryComponent* InInventory)
 	InitEquipSlot(EquipSlot_Chest, Inventory.Get());
 	InitEquipSlot(EquipSlot_Weapon, Inventory.Get());
 	InitEquipSlot(EquipSlot_Cloak, Inventory.Get());
-	InitEquipSlot(EquipSlot_Hands, Inventory.Get());
-	InitEquipSlot(EquipSlot_Pants, Inventory.Get());
-	InitEquipSlot(EquipSlot_Boots, Inventory.Get());
 
 	if (IsValid(PC))
 	{

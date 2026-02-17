@@ -83,8 +83,3 @@ bool ACombatantCharacterBase::ModifyAttributeCurrentValue_Implementation(FGamepl
 {
 	return IsValid(Attributes) ? Attributes->ModifyCurrentValue(AttributeTag, Delta, InstigatorActor) : false;
 }
-
-float ACombatantCharacterBase::GetAttributeFinalValue_Implementation(FGameplayTag AttributeTag) const
-{
-	return IsValid(Attributes) ? Attributes->GetFinalValue(AttributeTag) : 0.f;
-}

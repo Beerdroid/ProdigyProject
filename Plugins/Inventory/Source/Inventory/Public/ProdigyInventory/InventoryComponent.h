@@ -188,15 +188,6 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category="Inventory|Equipment")
 	bool GetEquippedItem(FGameplayTag EquipSlotTag, FName& OutItemID) const;
 
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category="Inventory|Equipment")
-	const TArray<FEquippedItemEntry>& GetEquippedItems() const { return EquippedItems; }
-
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category="Inventory|Equipment")
-	TArray<FEquippedItemEntry> GetEquippedItemsCopy() const
-	{
-		return EquippedItems;
-	}
-
 protected:
 	virtual void BeginPlay() override;
 
@@ -213,6 +204,4 @@ private:
 	TArray<FEquippedItemEntry> EquippedItems;
 
 	int32 FindEquippedIndex(FGameplayTag EquipSlotTag) const;
-
-
 };

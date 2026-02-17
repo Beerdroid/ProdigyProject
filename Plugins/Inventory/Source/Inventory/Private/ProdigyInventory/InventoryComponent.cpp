@@ -848,11 +848,10 @@ bool UInventoryComponent::EquipFromSlot(int32 SlotIndex, TArray<int32>& OutChang
 {
 	OutChangedSlots.Reset();
 
-	UE_LOG(LogInvPickupCore, Warning, TEXT("[EquipFromSlot] Inv=%s (%p) SlotIndex=%d Owner=%s"),
-		*GetNameSafe(this),
-		this,
+	UE_LOG(LogInvPickupCore, Warning,
+		TEXT("[EquipFromSlot] SlotIndex=%d Owner=%s"),
 		SlotIndex,
-		*GetNameSafe(GetOwner()))
+		*GetNameSafe(GetOwner()));
 
 	if (!IsValidIndex(SlotIndex))
 	{
@@ -943,14 +942,6 @@ bool UInventoryComponent::EquipFromSlot(int32 SlotIndex, TArray<int32>& OutChang
 	{
 		EquippedItems[ExistingIdx].ItemID = ItemID;
 	}
-
-	UE_LOG(LogInvPickupCore, Warning,
-	TEXT("  -> EquippedItems now: Num=%d ExistingIdx=%d SlotTag=%s ItemID=%s"),
-	EquippedItems.Num(),
-	ExistingIdx,
-	*Row.EquipSlotTag.ToString(),
-	*ItemID.ToString());
-
 
 	if (OutChangedSlots.Num() > 0)
 	{

@@ -80,15 +80,3 @@ UE_DEFINE_GAMEPLAY_TAG(ActionCueTags::Cue_Target_Invalid, "Cue.Target.Invalid");
 
 UE_DEFINE_GAMEPLAY_TAG(ActionCueTags::Cue_Action_Hit,     "Cue.Action.Hit");
 UE_DEFINE_GAMEPLAY_TAG(ActionCueTags::Cue_Action_Miss,    "Cue.Action.Miss");
-
-// =======================
-// EFFECT TAGS
-// =======================
-namespace ProdigyTags::Effect
-{
-	UE_DEFINE_GAMEPLAY_TAG(Burning,    "Effect.Burning");
-	UE_DEFINE_GAMEPLAY_TAG(Regeneration, "Effect.Regeneration");
-
-	UE_DEFINE_GAMEPLAY_TAG(Poison,     "Effect.Poison");
-	UE_DEFINE_GAMEPLAY_TAG(Bleed,  "Effect.Bleed");
-}
