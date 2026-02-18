@@ -5,6 +5,10 @@
 struct FGameplayTag;
 struct FActionContext;
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCombatTurnActorChanged, AActor*, CurrentTurnActor);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCombatStateChanged, bool, bNowInCombat);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnParticipantsChanged);
+
 UCLASS()
 class PRODIGYPROJECT_API UCombatSubsystem : public UGameInstanceSubsystem
 {
@@ -58,7 +62,23 @@ public:
 
 	void PruneParticipants();
 
-	TArray<TWeakObjectPtr<AActor>> GetParticipants(){return Participants;}
+	const TArray<TWeakObjectPtr<AActor>>& GetParticipants() const
+	{
+		return Participants;
+	}
+
+	UPROPERTY(BlueprintAssignable, Category="Combat|Events")
+	FOnCombatTurnActorChanged OnTurnActorChanged;
+
+	UPROPERTY(BlueprintAssignable, Category="Combat|Events")
+	FOnCombatStateChanged OnCombatStateChanged;
+
+	UPROPERTY(BlueprintAssignable, Category="Combat")
+	FOnParticipantsChanged OnParticipantsChanged;
+
+	UFUNCTION(BlueprintCallable, Category="Combat|Query")
+	AActor* GetCurrentTurnActor_BP() const { return GetCurrentTurnActor(); }
+
 	
 private:
 

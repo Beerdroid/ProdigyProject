@@ -3,7 +3,6 @@
 #include "AbilitySystem/ActionAgentInterface.h"
 #include "AbilitySystem/ActionComponent.h"
 #include "AbilitySystem/ActionCueSubsystem.h"
-#include "AbilitySystem/AttributesComponent.h"
 #include "AbilitySystem/ProdigyAbilityUtils.h"
 #include "AbilitySystem/ProdigyGameplayTags.h"
 
@@ -50,8 +49,11 @@ bool UCombatSubsystem::IsValidCombatant(AActor* A) const
 
 void UCombatSubsystem::ExitCombat()
 {
+	UE_LOG(LogActionExec, Warning, TEXT("[Combat] ExitCombat Started"));
+
 	if (!bInCombat) return;
 
+	// Stop any scheduled work first
 	CancelScheduledBeginTurn();
 
 	if (UWorld* World = GetWorld())
@@ -59,7 +61,8 @@ void UCombatSubsystem::ExitCombat()
 		World->GetTimerManager().ClearTimer(TimerHandle_AITakeAction);
 	}
 
-	// Unbind + reset combat flags
+	// Unbind + reset combat flags on current participants
+	// (use the current array before we clear it)
 	for (TWeakObjectPtr<AActor>& W : Participants)
 	{
 		AActor* A = W.Get();
@@ -72,10 +75,18 @@ void UCombatSubsystem::ExitCombat()
 		}
 	}
 
+	// ---- IMPORTANT: update state BEFORE broadcasting ----
 	Participants.Reset();
 	TurnIndex = 0;
 	bAdvancingTurn = false;
 	bInCombat = false;
+
+	// Now notify listeners with correct, final state
+	OnCombatStateChanged.Broadcast(false);
+	OnTurnActorChanged.Broadcast(nullptr);
+	OnParticipantsChanged.Broadcast();
+
+	UE_LOG(LogActionExec, Warning, TEXT("[Combat] ExitCombat Completed"));
 }
 
 void UCombatSubsystem::EnterCombat(const TArray<AActor*>& InParticipants, AActor* FirstToAct)
@@ -129,6 +140,9 @@ void UCombatSubsystem::EnterCombat(const TArray<AActor*>& InParticipants, AActor
 		TurnIndex = 0;
 	}
 
+	OnCombatStateChanged.Broadcast(true);
+	OnTurnActorChanged.Broadcast(GetCurrentTurnActor());
+
 	UE_LOG(LogActionExec, Warning, TEXT("[Combat] EnterCombat: Participants=%d FirstToAct=%s TurnIndex=%d"),
 	       Participants.Num(), *GetNameSafe(FirstToAct), TurnIndex);
 
@@ -173,6 +187,8 @@ void UCombatSubsystem::BeginTurnForIndex(int32 Index)
 	{
 		AC->OnTurnBegan();
 	}
+
+	OnTurnActorChanged.Broadcast(TurnActor);
 
 	// Player waits
 	APawn* PawnOwner = Cast<APawn>(TurnActor);
@@ -302,34 +318,28 @@ void UCombatSubsystem::AdvanceTurn()
 	if (!bInCombat) return;
 
 	PruneParticipants();
-
 	if (!bInCombat) return;
 	if (Participants.Num() == 0) return;
 
-	if (bAdvancingTurn)
+	// Guard: don't schedule another begin-turn if one is already queued
+	if (bTurnBeginScheduled)
 	{
-		UE_LOG(LogActionExec, Verbose, TEXT("[Combat] AdvanceTurn ignored (already advancing)"));
+		UE_LOG(LogActionExec, Verbose, TEXT("[Combat] AdvanceTurn ignored (begin turn already scheduled)"));
 		return;
 	}
 
-	bAdvancingTurn = true;
-
-	// ✅ capture current BEFORE changing index
 	AActor* CurrentActor = GetCurrentTurnActor();
 
-	UE_LOG(LogActionExec, Warning, TEXT("[Combat] AdvanceTurn: BEFORE TurnIndex=%d Current=%s Participants=%d"),
-	       TurnIndex, *GetNameSafe(CurrentActor), Participants.Num());
+	const int32 NextIndex = (TurnIndex + 1) % Participants.Num();
 
-	// now pick next
-	TurnIndex = (TurnIndex + 1) % Participants.Num();
+	UE_LOG(LogActionExec, Warning,
+		TEXT("[Combat] AdvanceTurn: CurrentIndex=%d Current=%s NextIndex=%d Next=%s"),
+		TurnIndex,
+		*GetNameSafe(CurrentActor),
+		NextIndex,
+		*GetNameSafe(Participants.IsValidIndex(NextIndex) ? Participants[NextIndex].Get() : nullptr));
 
-	UE_LOG(LogActionExec, Warning, TEXT("[Combat] AdvanceTurn: AFTER  TurnIndex=%d Next=%s"),
-	       TurnIndex, *GetNameSafe(GetCurrentTurnActor()));
-
-	// begin next on next tick
-	ScheduleBeginTurnForIndex(TurnIndex, BetweenTurnsDelaySeconds);
-
-	bAdvancingTurn = false;
+	ScheduleBeginTurnForIndex(NextIndex, BetweenTurnsDelaySeconds);
 }
 
 void UCombatSubsystem::HandleActionExecuted(FGameplayTag ActionTag, const FActionContext& Context)
@@ -342,11 +352,36 @@ void UCombatSubsystem::HandleActionExecuted(FGameplayTag ActionTag, const FActio
 	if (Context.Instigator != Current)
 	{
 		UE_LOG(LogActionExec, Verbose,
-		       TEXT("[Combat] Ignoring ActionExecuted (not current turn): Inst=%s Current=%s"),
-		       *GetNameSafe(Context.Instigator), *GetNameSafe(Current));
+			   TEXT("[Combat] Ignoring ActionExecuted (not current turn): Inst=%s Current=%s"),
+			   *GetNameSafe(Context.Instigator), *GetNameSafe(Current));
 		return;
 	}
 
+	// ✅ Defer pruning by one tick so killing-blow cues can spawn before ExitCombat clears state / gates cues.
+	if (UWorld* World = GetWorld())
+	{
+		const TWeakObjectPtr<UCombatSubsystem> SelfWeak(this);
+
+		World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateLambda([SelfWeak]()
+		{
+			if (!SelfWeak.IsValid()) return;
+			if (!SelfWeak->IsInCombat()) return;
+
+			SelfWeak->PruneParticipants();
+		}));
+	}
+
+	// ✅ Player can act multiple times per turn; only EndTurn should advance.
+	APawn* PawnOwner = Cast<APawn>(Current);
+	const bool bIsPlayer = PawnOwner && PawnOwner->IsPlayerControlled();
+	if (bIsPlayer)
+	{
+		UE_LOG(LogActionExec, Verbose,
+			   TEXT("[Combat] ActionExecuted by player: staying on same turn (wait for EndTurn)"));
+		return;
+	}
+
+	// ✅ AI still advances automatically after a successful action
 	AdvanceTurn();
 }
 
@@ -367,28 +402,31 @@ bool UCombatSubsystem::EndCurrentTurn(AActor* Instigator)
 
 void UCombatSubsystem::PruneParticipants()
 {
-	Participants.RemoveAll([](const TWeakObjectPtr<AActor>& W)
+	const int32 Before = Participants.Num();
+
+	Participants.RemoveAll([this](const TWeakObjectPtr<AActor>& W)
 	{
 		AActor* A = W.Get();
 		return !IsValid(A) || A->IsActorBeingDestroyed() || ProdigyAbilityUtils::IsDeadByAttributes(A);
 	});
 
-	// ✅ End combat when there is nobody to fight (0) OR only one survivor (1)
+	if (Participants.Num() != Before)
+	{
+		OnParticipantsChanged.Broadcast();
+	}
+
 	if (Participants.Num() <= 1)
 	{
-		ExitCombat();
+		ExitCombat();   // ExitCombat already broadcasts CombatStateChanged / TurnActorChanged
 		return;
 	}
 
 	TurnIndex = TurnIndex % Participants.Num();
-
-	// Keep index in range
 	if (PendingTurnIndex != INDEX_NONE)
 	{
 		PendingTurnIndex = PendingTurnIndex % Participants.Num();
 	}
 }
-
 
 void UCombatSubsystem::CancelScheduledBeginTurn()
 {

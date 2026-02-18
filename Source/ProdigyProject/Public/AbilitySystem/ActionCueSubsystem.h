@@ -37,6 +37,19 @@ struct FActionCueContext
 
     UPROPERTY(BlueprintReadWrite)
     FGameplayTag SurfaceTag;
+
+    // --- Optional combat info for gating (killing blow, etc.) ---
+    // If set (>0), lets cues know the target was alive at the moment of impact even if HP is 0 now.
+    UPROPERTY(BlueprintReadWrite)
+    float TargetHPBefore = -1.f;
+
+    // If set (>=0), post-damage HP snapshot (typically 0 on killing blow)
+    UPROPERTY(BlueprintReadWrite)
+    float TargetHPAfter = -1.f;
+
+    // If set (>0), damage amount that caused the cue (used for hit/kill logic)
+    UPROPERTY(BlueprintReadWrite)
+    float AppliedDamage = 0.f;
 };
 
 UCLASS()
@@ -75,6 +88,8 @@ private:
 
     // Filtering dead targets etc. (you’ll wire IsDeadByAttributes below)
     bool IsAttackableTarget(const FActionCueContext& Ctx) const;
+
+    bool IsAttackableTarget(const FGameplayTag& CueTag, const FActionCueContext& Ctx) const;
 
     UActionCueSet* ResolveCueSet(const FGameplayTag& CueTag, const FActionCueContext& Ctx) const;
 };

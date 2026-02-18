@@ -30,6 +30,16 @@ class PRODIGYPROJECT_API UActionDefinition : public UDataAsset
 	GENERATED_BODY()
 
 public:
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Action|UI")
+	FText DisplayName;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Action|UI")
+	FText Description;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Action|UI")
+	TObjectPtr<UTexture2D> Icon = nullptr;
+	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Action")
 	FGameplayTag ActionTag;
 

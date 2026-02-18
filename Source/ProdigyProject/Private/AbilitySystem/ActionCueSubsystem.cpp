@@ -85,7 +85,7 @@ void UActionCueSubsystem::PlayCue(const FGameplayTag& CueTag, const FActionCueCo
 		*GetNameSafe(Ctx.TargetActor),
 		Ctx.Location.X, Ctx.Location.Y, Ctx.Location.Z);
 
-	if (IsValid(Ctx.TargetActor) && !IsAttackableTarget(Ctx))
+	if (IsValid(Ctx.TargetActor) && !IsAttackableTarget(CueTag, Ctx))
 	{
 		UE_LOG(LogActionCue, Warning,
 			TEXT("[Cue] BLOCKED by IsAttackableTarget Tag=%s Target=%s"),
@@ -328,11 +328,23 @@ USceneComponent* UActionCueSubsystem::ResolveAttachComponent(AActor* A) const
 
 bool UActionCueSubsystem::IsAttackableTarget(const FActionCueContext& Ctx) const
 {
+	static const FGameplayTag EmptyTag;
+	return IsAttackableTarget(EmptyTag, Ctx);
+}
+
+bool UActionCueSubsystem::IsAttackableTarget(const FGameplayTag& CueTag, const FActionCueContext& Ctx) const
+{
 	if (!IsValid(Ctx.TargetActor)) return true;
 
 	if (Ctx.TargetActor->IsActorBeingDestroyed()) return false;
 
-	// Align with action/combat validity rules
+	// Allow default hit cue even if the target just died (killing blow).
+	const FGameplayTag HitCueTag = FGameplayTag::RequestGameplayTag(FName("Cue.Action.Hit"));
+	if (HitCueTag.IsValid() && CueTag == HitCueTag)
+	{
+		return true;
+	}
+
 	if (ProdigyAbilityUtils::IsDeadByAttributes(Ctx.TargetActor)) return false;
 
 	return true;

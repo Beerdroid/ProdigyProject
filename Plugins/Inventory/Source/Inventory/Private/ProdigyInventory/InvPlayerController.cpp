@@ -62,6 +62,36 @@ static FVector2D ClampWidgetPosToViewport(
 	return P;
 }
 
+static void PlaceSingleWidgetCenterWithYOffset(
+	APlayerController* PC,
+	UUserWidget* Widget,
+	float CenterYRatio = 0.70f, // 0.5 = true center, 0.7 = lower
+	FVector2D PaddingPx = FVector2D(16.f, 16.f),
+	bool bRemoveDPIScale = true)
+{
+	if (!IsValid(PC) || !IsValid(Widget)) return;
+
+	int32 VX = 0, VY = 0;
+	PC->GetViewportSize(VX, VY);
+	if (VX <= 0 || VY <= 0) return;
+
+	const FVector2D ViewportSize((float)VX, (float)VY);
+
+	Widget->ForceLayoutPrepass();
+	const FVector2D Size = Widget->GetDesiredSize();
+	if (Size.IsNearlyZero()) return;
+
+	const float CenterX = ViewportSize.X * 0.5f;
+	const float CenterY = ViewportSize.Y * FMath::Clamp(CenterYRatio, 0.f, 1.f);
+
+	FVector2D Pos(CenterX - Size.X * 0.5f, CenterY - Size.Y * 0.5f);
+
+	Pos = ClampWidgetPosToViewport(Pos, Size, ViewportSize, PaddingPx);
+
+	Widget->SetAlignmentInViewport(FVector2D(0.f, 0.f));
+	Widget->SetPositionInViewport(Pos, bRemoveDPIScale);
+}
+
 static void PlaceSingleWidgetRight(
 	APlayerController* PC,
 	UUserWidget* Widget,
