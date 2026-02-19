@@ -7,12 +7,96 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "AIController.h"
 #include "BrainComponent.h"
+#include "AbilitySystem/ProdigyGameplayTags.h"
+#include "Components/CapsuleComponent.h"
+#include "Components/HealthBarWidgetComponent.h"
 
 ACombatantCharacterBase::ACombatantCharacterBase()
 {
 	Status       = CreateDefaultSubobject<UStatusComponent>(TEXT("Status"));
 	ActionComponent = CreateDefaultSubobject<UActionComponent>(TEXT("ActionComponent"));
 	Attributes = CreateDefaultSubobject<UAttributesComponent>(TEXT("Attributes"));
+}
+
+void ACombatantCharacterBase::BeginPlay()
+{
+	Super::BeginPlay();
+
+	WorldHealthBar = FindComponentByClass<UHealthBarWidgetComponent>();
+
+	if (!IsValid(Attributes))
+	{
+		Attributes = FindComponentByClass<UAttributesComponent>();
+	}
+
+	if (IsValid(Attributes))
+	{
+		Attributes->OnAttributeChanged.RemoveDynamic(this, &ACombatantCharacterBase::HandleDeathIfNeeded);
+		Attributes->OnAttributeChanged.AddDynamic(this, &ACombatantCharacterBase::HandleDeathIfNeeded);
+	}
+}
+
+void ACombatantCharacterBase::EnableRagdoll()
+{
+	if (bDidRagdoll) return;
+	bDidRagdoll = true;
+
+	// Stop movement immediately
+	if (UCharacterMovementComponent* Move = GetCharacterMovement())
+	{
+		Move->StopMovementImmediately();
+		Move->DisableMovement();
+		Move->SetComponentTickEnabled(false);
+	}
+
+	// Disable capsule collision so ragdoll isn't fighting it
+	if (UCapsuleComponent* Capsule = GetCapsuleComponent())
+	{
+		Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Capsule->SetGenerateOverlapEvents(false);
+	}
+
+	USkeletalMeshComponent* MeshComp = GetMesh();
+	if (!IsValid(MeshComp)) return;
+
+	// Make sure mesh can collide + simulate
+
+	MeshComp->SetSimulatePhysics(true);
+	MeshComp->SetEnableGravity(true);
+	MeshComp->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
+	MeshComp->SetCollisionEnabled(ECollisionEnabled::PhysicsOnly);
+}
+
+void ACombatantCharacterBase::HandleDeathIfNeeded(FGameplayTag Tag, float NewValue, float Delta, AActor* InstigatorActor)
+{
+	if (bDidRagdoll) return;
+
+	if (Tag != ProdigyTags::Attr::Health) return;
+
+	if (NewValue > 0.f) return;
+
+	RemoveHealthBar();
+	EnableRagdoll();
+}
+
+void ACombatantCharacterBase::RemoveHealthBar()
+{
+	// Resolve lazily (works even if you forgot to cache)
+	if (!IsValid(WorldHealthBar))
+	{
+		WorldHealthBar = FindComponentByClass<UHealthBarWidgetComponent>();
+	}
+
+	if (!IsValid(WorldHealthBar)) return;
+
+	// Hard hide
+	WorldHealthBar->SetVisibility(false, true);
+	WorldHealthBar->SetHiddenInGame(true);
+
+	// The reliable part: remove the actual widget content
+	WorldHealthBar->SetWidget(nullptr);
+	WorldHealthBar->SetWidgetClass(nullptr);
+
 }
 
 void ACombatantCharacterBase::OnCombatFreeze_Implementation(bool bFrozen)
