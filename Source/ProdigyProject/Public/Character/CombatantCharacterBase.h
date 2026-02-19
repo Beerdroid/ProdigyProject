@@ -12,6 +12,7 @@
 
 class UActionComponent;
 class UStatusComponent;
+class UHealthBarWidgetComponent;
 
 UCLASS()
 class PRODIGYPROJECT_API ACombatantCharacterBase : public ACharacter, public IActionAgentInterface, public ICombatantInterface
@@ -20,6 +21,8 @@ class PRODIGYPROJECT_API ACombatantCharacterBase : public ACharacter, public IAc
 
 public:
 	ACombatantCharacterBase();
+
+	virtual void BeginPlay() override;
 
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat|Components")
@@ -30,6 +33,20 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Combat|Components")
 	TObjectPtr<UAttributesComponent> Attributes = nullptr;
+
+	UPROPERTY(Transient)
+	bool bDidRagdoll = false;
+
+	UFUNCTION(BlueprintCallable, Category="Combat|Death")
+	void EnableRagdoll();
+
+	UFUNCTION()
+	void HandleDeathIfNeeded(FGameplayTag Tag, float NewValue, float Delta, AActor* InstigatorActor);
+
+	UPROPERTY(Transient)
+	TObjectPtr<UHealthBarWidgetComponent> WorldHealthBar = nullptr;
+
+	void RemoveHealthBar();
 
 public:
 	// ---- ICombatantInterface ----

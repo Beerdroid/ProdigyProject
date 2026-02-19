@@ -93,6 +93,28 @@ void UActionComponent::OnTurnEnded()
 	ACTION_LOG(Log, TEXT("OnTurnEnded"));
 }
 
+bool UActionComponent::TryGetActionDefinition(FGameplayTag ActionTag, UActionDefinition*& OutDef) const
+{
+	OutDef = nullptr;
+	if (!ActionTag.IsValid()) return false;
+
+	const UActionDefinition* Def = FindDef(ActionTag);
+	OutDef = const_cast<UActionDefinition*>(Def);
+	return IsValid(OutDef);
+}
+
+TArray<FGameplayTag> UActionComponent::GetKnownActionTags() const
+{
+	TArray<FGameplayTag> Out;
+	Out.Reserve(ActionMap.Num());
+
+	for (const auto& Pair : ActionMap)
+	{
+		Out.Add(Pair.Key);
+	}
+	return Out;
+}
+
 void UActionComponent::BeginPlay()
 {
 	Super::BeginPlay();
@@ -120,6 +142,7 @@ const UActionDefinition* UActionComponent::FindDef(FGameplayTag Tag) const
 
 void UActionComponent::SetInCombat(bool bNowInCombat)
 {
+	if (bInCombat == bNowInCombat) return;
 	bInCombat = bNowInCombat;
 }
 

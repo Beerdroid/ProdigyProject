@@ -22,6 +22,8 @@ UE_LOG(LogTargeting, Verbosity, TEXT("[PC:%s] " Fmt), *GetNameSafe(this), ##__VA
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTargetLocked, AActor*, NewTarget);
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnCombatHUDDirty);
+
 UCLASS()
 class PRODIGYPROJECT_API AProdigyPlayerController : public AInvPlayerController
 {
@@ -29,6 +31,8 @@ class PRODIGYPROJECT_API AProdigyPlayerController : public AInvPlayerController
 
 public:
 	AProdigyPlayerController();
+
+	virtual void OnPossess(APawn* InPawn) override;
 
 protected:
 	virtual void BeginPlay() override;
@@ -74,6 +78,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Targeting")
 	bool TryLockTargetUnderCursor();
 
+	UFUNCTION()
+	void SetParticipantsWorldHealthBarsVisible(bool bVisible);
+
+	void ShowDamageNumber_Implementation(float DamageAmount, ACharacter* TargetCharacter);
+
+	UPROPERTY(EditDefaultsOnly, Category="FloatingDamage")
+	TSubclassOf<class UDamageTextComponent> DamageTextComponentClass;
+
 	bool TryLockTarget(AActor* Candidate);
 
 	UFUNCTION(BlueprintCallable, Category="Targeting")
@@ -104,6 +116,58 @@ public:
 
 	virtual bool ConsumeFromSlot(int32 SlotIndex, TArray<int32>& OutChanged) override;
 
+	//UI
+
+	UPROPERTY(EditDefaultsOnly, Category="UI")
+	TSubclassOf<UUserWidget> CombatHUDClass;
+
+	UPROPERTY()
+	TObjectPtr<UUserWidget> CombatHUD;
+
+	UFUNCTION(BlueprintCallable, Category="UI")
+	void ShowCombatHUD();
+
+	UFUNCTION(BlueprintCallable, Category="UI")
+	void HideCombatHUD();
+
+	// Called by widget buttons
+	UFUNCTION(BlueprintCallable, Category="UI")
+	void UI_StartFight();
+
+	UFUNCTION(BlueprintCallable, Category="UI")
+	void UI_EndTurn();
+
+	// Used by widget to display text
+	UFUNCTION(BlueprintCallable, Category="UI")
+	float UI_GetHP() const;
+
+	UFUNCTION(BlueprintCallable, Category="UI")
+	float UI_GetMaxHP() const;
+
+	UFUNCTION(BlueprintCallable, Category="UI")
+	float UI_GetAP() const;
+
+	UFUNCTION(BlueprintCallable, Category="UI")
+	float UI_GetMaxAP() const;
+
+	UFUNCTION(BlueprintCallable, Category="UI")
+	bool UI_IsInCombat() const;
+
+	UPROPERTY(BlueprintAssignable, Category="UI")
+	FOnCombatHUDDirty OnCombatHUDDirty;
+
+	UFUNCTION()
+	void HandleCombatStateChanged_FromSubsystem(bool bNowInCombat);
+
+	UFUNCTION()
+	void HandleTurnActorChanged_FromSubsystem(AActor* CurrentTurnActor);
+
+	UFUNCTION()
+	void HandleParticipantsChanged_FromSubsystem();
+
+	UFUNCTION()
+	void ValidateCombatHUDVisibility();
+
 protected:
 	// Add in BP child if you prefer; these will auto-find if present.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Quest")
@@ -117,6 +181,15 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, Category="Targeting")
 	TEnumAsByte<ECollisionChannel> TargetTraceChannel = ECC_Visibility;
+
+	UFUNCTION()
+	void HandleAttrChanged_ForHUD(FGameplayTag Tag, float NewValue, float Delta, AActor* InInstigator);
+
+	UFUNCTION()
+	void HandleCombatStateChanged_ForHUD(bool bNowInCombat);
+
+	UFUNCTION()
+	void HandleTurnChanged_ForHUD();
 
 private:
 	void CacheComponents();

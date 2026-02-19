@@ -35,10 +35,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Action")
 	bool IsInCombat() const { return bInCombat; }
 
-	UFUNCTION(BlueprintCallable, Category="Action")
+	UFUNCTION(BlueprintCallable,Category="Action")
 	FActionQueryResult QueryAction(FGameplayTag ActionTag, const FActionContext& Context) const;
 
-	UFUNCTION(BlueprintCallable, Category="Action")
+	UFUNCTION(Category="Action")
 	bool ExecuteAction(FGameplayTag ActionTag, const FActionContext& Context);
 
 	UPROPERTY(BlueprintAssignable)
@@ -48,6 +48,12 @@ public:
 	void OnTurnBegan();
 
 	void OnTurnEnded();
+
+	UFUNCTION(BlueprintCallable, Category="Action|UI")
+	bool TryGetActionDefinition(FGameplayTag ActionTag, UActionDefinition*& OutDef) const;
+
+	UFUNCTION(BlueprintCallable, Category="Action|UI")
+	TArray<FGameplayTag> GetKnownActionTags() const;
 
 protected:
 	virtual void BeginPlay() override;

@@ -5,18 +5,74 @@
 #include "AbilitySystem/AttributesComponent.h"
 #include "AbilitySystem/CombatSubsystem.h"
 #include "AbilitySystem/EquipModSource.h"
+#include "AbilitySystem/ProdigyAbilityUtils.h"
 #include "AbilitySystem/ProdigyGameplayTags.h"
+#include "Blueprint/UserWidget.h"
+#include "Character/Components/DamageTextComponent.h"
+#include "Character/Components/HealthBarWidgetComponent.h"
 #include "Quest/QuestLogComponent.h"
 #include "Quest/Integration/QuestIntegrationComponent.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/Character.h"
 #include "Interfaces/CombatantInterface.h"
 #include "Interfaces/UInv_Interactable.h"
+#include "UI/Utils/ProdigyWidgetPlacement.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogEquipMods, Log, All);
+
+
+static void BindCombatSubsystemEvents(AProdigyPlayerController* PC)
+{
+	if (!PC) return;
+
+	if (UCombatSubsystem* Combat = PC->GetCombatSubsystem())
+	{
+		Combat->OnCombatStateChanged.RemoveAll(PC);
+		Combat->OnTurnActorChanged.RemoveAll(PC);
+		Combat->OnParticipantsChanged.RemoveAll(PC);
+
+		Combat->OnCombatStateChanged.AddDynamic(PC, &AProdigyPlayerController::HandleCombatStateChanged_FromSubsystem);
+		Combat->OnTurnActorChanged.AddDynamic(PC, &AProdigyPlayerController::HandleTurnActorChanged_FromSubsystem);
+		Combat->OnParticipantsChanged.AddDynamic(PC, &AProdigyPlayerController::HandleParticipantsChanged_FromSubsystem);
+	}
+}
 
 AProdigyPlayerController::AProdigyPlayerController()
 {
 	// Nothing required here; components can be added in BP.
+}
+
+void AProdigyPlayerController::OnPossess(APawn* InPawn)
+{
+	Super::OnPossess(InPawn);
+
+	if (UAttributesComponent* Attr = InPawn->FindComponentByClass<UAttributesComponent>())
+	{
+		Attr->OnAttributeChanged.AddDynamic(this, &AProdigyPlayerController::HandleAttrChanged_ForHUD);
+	}
+}
+
+
+void AProdigyPlayerController::HandleAttrChanged_ForHUD(FGameplayTag Tag, float NewValue, float Delta, AActor* InInstigator)
+{
+	// Only broadcast for the tags HUD cares about
+	if (Tag == ProdigyTags::Attr::Health || Tag == ProdigyTags::Attr::AP ||
+		Tag == ProdigyTags::Attr::MaxHealth || Tag == ProdigyTags::Attr::MaxAP)
+	{
+		OnCombatHUDDirty.Broadcast();
+	}
+}
+
+
+void AProdigyPlayerController::HandleCombatStateChanged_ForHUD(bool bNowInCombat)
+{
+	OnCombatHUDDirty.Broadcast();
+}
+
+
+void AProdigyPlayerController::HandleTurnChanged_ForHUD()
+{
+	OnCombatHUDDirty.Broadcast();
 }
 
 void AProdigyPlayerController::BeginPlay()
@@ -28,6 +84,8 @@ void AProdigyPlayerController::BeginPlay()
 	BindInventoryDelegates();
 
 	ReapplyAllEquipmentMods();
+
+	BindCombatSubsystemEvents(this);
 
 	OnPossessedPawnChanged.RemoveDynamic(this, &ThisClass::HandlePossessedPawnChanged);
 	OnPossessedPawnChanged.AddDynamic(this, &ThisClass::HandlePossessedPawnChanged);
@@ -141,19 +199,6 @@ void AProdigyPlayerController::PrimaryInteract()
 	}
 }
 
-void AProdigyPlayerController::ClearLockedTarget()
-{
-	if (!LockedTarget) return;
-
-	TARGET_LOG(Log,
-	           TEXT("ClearTarget (was %s)"),
-	           *GetNameSafe(LockedTarget)
-	);
-
-	LockedTarget = nullptr;
-	OnTargetLocked.Broadcast(nullptr);
-}
-
 bool AProdigyPlayerController::TryLockTargetUnderCursor()
 {
 	FHitResult Hit;
@@ -178,6 +223,58 @@ bool AProdigyPlayerController::TryLockTargetUnderCursor()
 	}
 
 	return TryLockTarget(Candidate);
+}
+
+void AProdigyPlayerController::SetParticipantsWorldHealthBarsVisible(bool bVisible)
+{
+	UCombatSubsystem* Combat = GetCombatSubsystem();
+	if (!Combat) return;
+
+	const TArray<TWeakObjectPtr<AActor>> Parts = Combat->GetParticipants();
+
+	for (const TWeakObjectPtr<AActor>& W : Parts)
+	{
+		AActor* A = W.Get();
+		if (!IsValid(A)) continue;
+
+		APawn* P = Cast<APawn>(A);
+		const bool bIsPlayerControlled = P && P->IsPlayerControlled();
+		if (bIsPlayerControlled) continue;
+
+		UHealthBarWidgetComponent* HC = A->FindComponentByClass<UHealthBarWidgetComponent>();
+		if (!IsValid(HC))
+		{
+			UE_LOG(LogTemp, Error, TEXT("[WorldHP] MISSING on Enemy=%s Class=%s (no UHealthBarWidgetComponent found)"),
+				*GetNameSafe(A),
+				*GetNameSafe(A->GetClass()));
+			continue;
+		}
+
+		// HC->SetVisible(bVisible);
+	}
+}
+
+void AProdigyPlayerController::ShowDamageNumber_Implementation(float DamageAmount, ACharacter* TargetCharacter)
+{
+	if (!IsValid(TargetCharacter)) return;
+	if (!DamageTextComponentClass) return;
+
+	UDamageTextComponent* DamageText =
+		NewObject<UDamageTextComponent>(TargetCharacter, DamageTextComponentClass);
+
+	if (!IsValid(DamageText)) return;
+
+	// Attach first so it inherits the actor world + gets a sane transform basis
+	USceneComponent* Root = TargetCharacter->GetRootComponent();
+	if (!IsValid(Root)) return;
+
+	DamageText->RegisterComponent();
+	DamageText->AttachToComponent(TargetCharacter->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+	const FVector WorldLoc = TargetCharacter->GetActorLocation() + FVector(0.f, 0.f, 130.f);
+	DamageText->SetWorldLocation(WorldLoc);
+	DamageText->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+	DamageText->SetDamageText(DamageAmount);
+
 }
 
 AActor* AProdigyPlayerController::GetActorUnderCursorForClick() const
@@ -235,13 +332,26 @@ void AProdigyPlayerController::SetLockedTarget(AActor* NewTarget)
 {
 	if (LockedTarget == NewTarget) return;
 
-	TARGET_LOG(Log,
-	           TEXT("LockTarget -> %s"),
-	           *GetNameSafe(NewTarget)
-	);
+	TARGET_LOG(Log, TEXT("LockTarget -> %s"), *GetNameSafe(NewTarget));
 
 	LockedTarget = NewTarget;
 	OnTargetLocked.Broadcast(LockedTarget);
+
+	ValidateCombatHUDVisibility();
+	OnCombatHUDDirty.Broadcast();
+}
+
+void AProdigyPlayerController::ClearLockedTarget()
+{
+	if (!LockedTarget) return;
+
+	TARGET_LOG(Log, TEXT("ClearTarget (was %s)"), *GetNameSafe(LockedTarget));
+
+	LockedTarget = nullptr;
+	OnTargetLocked.Broadcast(nullptr);
+
+	ValidateCombatHUDVisibility();
+	OnCombatHUDDirty.Broadcast();;
 }
 
 FActionContext AProdigyPlayerController::BuildActionContextFromLockedTarget() const
@@ -278,8 +388,8 @@ bool AProdigyPlayerController::TryUseAbilityOnLockedTarget(FGameplayTag AbilityT
 		if (TurnActor != P)
 		{
 			UE_LOG(LogActionExec, Warning,
-			       TEXT("[PC:%s] Ability blocked: not your turn (Turn=%s)"),
-			       *GetNameSafe(this), *GetNameSafe(TurnActor));
+				   TEXT("[PC:%s] Ability blocked: not your turn (Turn=%s)"),
+				   *GetNameSafe(this), *GetNameSafe(TurnActor));
 			return false;
 		}
 	}
@@ -307,7 +417,15 @@ bool AProdigyPlayerController::TryUseAbilityOnLockedTarget(FGameplayTag AbilityT
 	Ctx.Instigator = P;
 	Ctx.TargetActor = Target;
 
-	return AC->ExecuteAction(AbilityTag, Ctx);
+	const bool bOk = AC->ExecuteAction(AbilityTag, Ctx);
+
+	// ✅ Force HUD refresh immediately so cooldown disables right after usage
+	if (bOk)
+	{
+		OnCombatHUDDirty.Broadcast();
+	}
+
+	return bOk;
 }
 
 void AProdigyPlayerController::EndTurn()
@@ -462,6 +580,8 @@ void AProdigyPlayerController::HandleItemEquipped(FGameplayTag EquipSlotTag, FNa
 
 	Attr->SetModsForSource(Source, Mods, GetPawn());
 
+	OnCombatHUDDirty.Broadcast();
+
 	UE_LOG(LogEquipMods, Warning,
 	       TEXT("[PC] After equip Slot=%s Item=%s  FinalMaxHealth=%.2f  CurHealth=%.2f  FinalHealth=%.2f"),
 	       *EquipSlotTag.ToString(),
@@ -488,6 +608,8 @@ void AProdigyPlayerController::HandleItemUnequipped(FGameplayTag EquipSlotTag, F
 	if (!IsValid(Source)) return;
 
 	Attr->ClearModsForSource(Source, /*InstigatorSource*/ GetPawn());
+
+	OnCombatHUDDirty.Broadcast();
 
 	UE_LOG(LogEquipMods, Warning,
 	       TEXT("[PC] After unequip Slot=%s Item=%s  FinalMaxHealth=%.2f  CurHealth=%.2f  FinalHealth=%.2f"),
@@ -583,6 +705,7 @@ bool AProdigyPlayerController::ConsumeFromSlot(int32 SlotIndex, TArray<int32>& O
 	return bRemoved;
 }
 
+
 void AProdigyPlayerController::ReapplyAllEquipmentMods()
 {
 	UAttributesComponent* Attr = Attributes.Get();
@@ -636,5 +759,227 @@ void AProdigyPlayerController::ReapplyAllEquipmentMods()
 		       *SlotTag.ToString(), *ItemID.ToString(), Mods.Num());
 	}
 
+	OnCombatHUDDirty.Broadcast();
+	
 	UE_LOG(LogEquipMods, Warning, TEXT("[PC] ReapplyAllEquipmentMods end"));
+}
+
+void AProdigyPlayerController::ShowCombatHUD()
+{
+	if (!CombatHUDClass) return;
+
+	if (!IsValid(CombatHUD))
+	{
+		CombatHUD = CreateWidget<UUserWidget>(this, CombatHUDClass);
+		if (!IsValid(CombatHUD)) return;
+
+		CombatHUD->AddToViewport(2000);
+
+		GetWorldTimerManager().SetTimerForNextTick([this]()
+		{
+			if (!IsValid(CombatHUD)) return;
+			PlaceSingleWidgetBottomCenter(this, CombatHUD, /*BottomPaddingPx*/ 32.f);
+		});
+	}
+
+	// IMPORTANT: no ValidateCombatHUDVisibility() here
+	CombatHUD->SetVisibility(ESlateVisibility::Visible);
+	CombatHUD->SetIsEnabled(true);
+
+	OnCombatHUDDirty.Broadcast();
+}
+
+void AProdigyPlayerController::HideCombatHUD()
+{
+	if (!IsValid(CombatHUD)) return;
+
+	CombatHUD->SetVisibility(ESlateVisibility::Collapsed);
+	CombatHUD->SetIsEnabled(false);
+}
+
+bool AProdigyPlayerController::UI_IsInCombat() const
+{
+	if (UCombatSubsystem* Combat = GetCombatSubsystem())
+	{
+		return Combat->IsInCombat();
+	}
+	return false;
+}
+
+void AProdigyPlayerController::HandleCombatStateChanged_FromSubsystem(bool bNowInCombat)
+{
+	ValidateCombatHUDVisibility();
+
+	SetParticipantsWorldHealthBarsVisible(bNowInCombat);
+	
+	OnCombatHUDDirty.Broadcast();
+}
+
+void AProdigyPlayerController::HandleTurnActorChanged_FromSubsystem(AActor* CurrentTurnActor)
+{
+	ValidateCombatHUDVisibility();
+
+	if (UCombatSubsystem* Combat = GetCombatSubsystem())
+	{
+		SetParticipantsWorldHealthBarsVisible(Combat->IsInCombat());
+	}
+	
+	OnCombatHUDDirty.Broadcast();
+}
+
+void AProdigyPlayerController::HandleParticipantsChanged_FromSubsystem()
+{
+	ValidateCombatHUDVisibility();
+}
+
+void AProdigyPlayerController::ValidateCombatHUDVisibility()
+{
+	APawn* MyPawn = GetPawn();
+	if (!IsValid(MyPawn))
+	{
+		HideCombatHUD();
+		return;
+	}
+
+	// Helper: ensure widget exists but do NOT force visible
+	auto EnsureHUD = [this]()
+	{
+		if (IsValid(CombatHUD) || !CombatHUDClass) return;
+
+		CombatHUD = CreateWidget<UUserWidget>(this, CombatHUDClass);
+		if (!IsValid(CombatHUD)) return;
+
+		CombatHUD->AddToViewport(2000);
+
+		GetWorldTimerManager().SetTimerForNextTick([this]()
+		{
+			if (!IsValid(CombatHUD)) return;
+			PlaceSingleWidgetBottomCenter(this, CombatHUD, /*BottomPaddingPx*/ 32.f);
+		});
+
+		// Start hidden until we decide otherwise
+		CombatHUD->SetVisibility(ESlateVisibility::Collapsed);
+		CombatHUD->SetIsEnabled(false);
+	};
+
+	UCombatSubsystem* Combat = GetCombatSubsystem();
+
+	bool bShouldShow = false;
+
+	// A) In combat: show if there's at least one enemy participant.
+	// (Optional: also require that *I* am one of the participants, using controller ownership, not pointer equality.)
+	if (Combat && Combat->IsInCombat())
+	{
+		const TArray<TWeakObjectPtr<AActor>> Parts = Combat->GetParticipants();
+
+		bool bHasMe = false;
+		bool bHasEnemy = false;
+
+		for (const TWeakObjectPtr<AActor>& W : Parts)
+		{
+			AActor* A = W.Get();
+			if (!IsValid(A)) continue;
+
+			APawn* OwnPawn = Cast<APawn>(A);
+
+			// "Me" detection: either the pawn pointer matches OR it is controlled by this PC.
+			if (OwnPawn && (OwnPawn == MyPawn || OwnPawn->GetController() == this))
+			{
+				bHasMe = true;
+				continue;
+			}
+
+			// Enemy detection:
+			// - Non-player-controlled pawn counts as enemy
+			// - Non-pawn combatants count as enemy too (safe default for HUD)
+			const bool bIsPlayerControlled = OwnPawn && OwnPawn->IsPlayerControlled();
+			if (!bIsPlayerControlled)
+			{
+				bHasEnemy = true;
+			}
+		}
+
+		// If you don't care about bHasMe, just do: bShouldShow = bHasEnemy;
+		bShouldShow = bHasMe && bHasEnemy;
+	}
+	else
+	{
+		// B) Pre-combat: show if valid locked target and not dead
+		AActor* T = LockedTarget.Get();
+		if (IsValid(T))
+		{
+			if (!bOnlyLockCombatants || T->GetClass()->ImplementsInterface(UCombatantInterface::StaticClass()))
+			{
+				bShouldShow = !ProdigyAbilityUtils::IsDeadByAttributes(T);
+			}
+		}
+	}
+
+	// If we might show, make sure it exists
+	if (bShouldShow)
+	{
+		EnsureHUD();
+	}
+
+	// Apply state
+	if (bShouldShow && IsValid(CombatHUD))
+	{
+		CombatHUD->SetVisibility(ESlateVisibility::Visible);
+		CombatHUD->SetIsEnabled(true);
+	}
+	else
+	{
+		HideCombatHUD();
+	}
+
+	OnCombatHUDDirty.Broadcast();
+}
+
+float AProdigyPlayerController::UI_GetHP() const
+{
+	UAttributesComponent* Attr = GetPawn() ? GetPawn()->FindComponentByClass<UAttributesComponent>() : nullptr;
+	return IsValid(Attr) ? Attr->GetCurrentValue(ProdigyTags::Attr::Health) : 0.f;
+}
+
+float AProdigyPlayerController::UI_GetMaxHP() const
+{
+	UAttributesComponent* Attr = GetPawn() ? GetPawn()->FindComponentByClass<UAttributesComponent>() : nullptr;
+	return IsValid(Attr) ? Attr->GetFinalValue(ProdigyTags::Attr::MaxHealth) : 0.f;
+}
+
+float AProdigyPlayerController::UI_GetAP() const
+{
+	UAttributesComponent* Attr = GetPawn() ? GetPawn()->FindComponentByClass<UAttributesComponent>() : nullptr;
+	return IsValid(Attr) ? Attr->GetCurrentValue(ProdigyTags::Attr::AP) : 0.f;
+}
+
+float AProdigyPlayerController::UI_GetMaxAP() const
+{
+	UAttributesComponent* Attr = GetPawn() ? GetPawn()->FindComponentByClass<UAttributesComponent>() : nullptr;
+	return IsValid(Attr) ? Attr->GetFinalValue(ProdigyTags::Attr::MaxAP) : 0.f;
+}
+
+void AProdigyPlayerController::UI_StartFight()
+{
+	APawn* P = GetPawn();
+	if (!IsValid(P)) return;
+
+	UCombatSubsystem* Combat = GetCombatSubsystem();
+	if (!Combat) return;
+
+	AActor* Target = LockedTarget.Get();
+	if (!IsValid(Target)) return;
+
+	if (Combat->IsInCombat()) return;
+
+	TArray<AActor*> Parts;
+	Parts.Add(Target);
+	Parts.Add(P);
+
+	Combat->EnterCombat(Parts, /*FirstToAct*/ P);
+}
+
+void AProdigyPlayerController::UI_EndTurn()
+{
+	EndTurn();
 }
