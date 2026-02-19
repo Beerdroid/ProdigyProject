@@ -8,9 +8,12 @@
 #include "AbilitySystem/ProdigyAbilityUtils.h"
 #include "AbilitySystem/ProdigyGameplayTags.h"
 #include "Blueprint/UserWidget.h"
+#include "Character/Components/DamageTextComponent.h"
+#include "Character/Components/HealthBarWidgetComponent.h"
 #include "Quest/QuestLogComponent.h"
 #include "Quest/Integration/QuestIntegrationComponent.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/Character.h"
 #include "Interfaces/CombatantInterface.h"
 #include "Interfaces/UInv_Interactable.h"
 #include "UI/Utils/ProdigyWidgetPlacement.h"
@@ -220,6 +223,58 @@ bool AProdigyPlayerController::TryLockTargetUnderCursor()
 	}
 
 	return TryLockTarget(Candidate);
+}
+
+void AProdigyPlayerController::SetParticipantsWorldHealthBarsVisible(bool bVisible)
+{
+	UCombatSubsystem* Combat = GetCombatSubsystem();
+	if (!Combat) return;
+
+	const TArray<TWeakObjectPtr<AActor>> Parts = Combat->GetParticipants();
+
+	for (const TWeakObjectPtr<AActor>& W : Parts)
+	{
+		AActor* A = W.Get();
+		if (!IsValid(A)) continue;
+
+		APawn* P = Cast<APawn>(A);
+		const bool bIsPlayerControlled = P && P->IsPlayerControlled();
+		if (bIsPlayerControlled) continue;
+
+		UHealthBarWidgetComponent* HC = A->FindComponentByClass<UHealthBarWidgetComponent>();
+		if (!IsValid(HC))
+		{
+			UE_LOG(LogTemp, Error, TEXT("[WorldHP] MISSING on Enemy=%s Class=%s (no UHealthBarWidgetComponent found)"),
+				*GetNameSafe(A),
+				*GetNameSafe(A->GetClass()));
+			continue;
+		}
+
+		// HC->SetVisible(bVisible);
+	}
+}
+
+void AProdigyPlayerController::ShowDamageNumber_Implementation(float DamageAmount, ACharacter* TargetCharacter)
+{
+	if (!IsValid(TargetCharacter)) return;
+	if (!DamageTextComponentClass) return;
+
+	UDamageTextComponent* DamageText =
+		NewObject<UDamageTextComponent>(TargetCharacter, DamageTextComponentClass);
+
+	if (!IsValid(DamageText)) return;
+
+	// Attach first so it inherits the actor world + gets a sane transform basis
+	USceneComponent* Root = TargetCharacter->GetRootComponent();
+	if (!IsValid(Root)) return;
+
+	DamageText->RegisterComponent();
+	DamageText->AttachToComponent(TargetCharacter->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+	const FVector WorldLoc = TargetCharacter->GetActorLocation() + FVector(0.f, 0.f, 130.f);
+	DamageText->SetWorldLocation(WorldLoc);
+	DamageText->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+	DamageText->SetDamageText(DamageAmount);
+
 }
 
 AActor* AProdigyPlayerController::GetActorUnderCursorForClick() const
@@ -754,12 +809,21 @@ bool AProdigyPlayerController::UI_IsInCombat() const
 void AProdigyPlayerController::HandleCombatStateChanged_FromSubsystem(bool bNowInCombat)
 {
 	ValidateCombatHUDVisibility();
+
+	SetParticipantsWorldHealthBarsVisible(bNowInCombat);
+	
 	OnCombatHUDDirty.Broadcast();
 }
 
 void AProdigyPlayerController::HandleTurnActorChanged_FromSubsystem(AActor* CurrentTurnActor)
 {
 	ValidateCombatHUDVisibility();
+
+	if (UCombatSubsystem* Combat = GetCombatSubsystem())
+	{
+		SetParticipantsWorldHealthBarsVisible(Combat->IsInCombat());
+	}
+	
 	OnCombatHUDDirty.Broadcast();
 }
 

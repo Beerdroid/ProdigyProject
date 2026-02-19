@@ -78,6 +78,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Targeting")
 	bool TryLockTargetUnderCursor();
 
+	UFUNCTION()
+	void SetParticipantsWorldHealthBarsVisible(bool bVisible);
+
+	void ShowDamageNumber_Implementation(float DamageAmount, ACharacter* TargetCharacter);
+
+	UPROPERTY(EditDefaultsOnly, Category="FloatingDamage")
+	TSubclassOf<class UDamageTextComponent> DamageTextComponentClass;
+
 	bool TryLockTarget(AActor* Candidate);
 
 	UFUNCTION(BlueprintCallable, Category="Targeting")

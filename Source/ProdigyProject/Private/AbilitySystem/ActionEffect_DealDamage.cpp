@@ -4,7 +4,12 @@
 #include "AbilitySystem/ActionCueSettings.h"
 #include "AbilitySystem/ActionCueSubsystem.h"
 #include "AbilitySystem/ProdigyGameplayTags.h"
+#include "AbilitySystem/WorldCombatEvents.h"
+#include "Character/Components/HealthBarWidgetComponent.h"
+#include "GameFramework/Character.h"
+#include "Player/ProdigyPlayerController.h"
 
+class UHealthBarWidgetComponent;
 class UActionCueSettings;
 
 bool UActionEffect_DealDamage::Apply_Implementation(const FActionContext& Context) const
@@ -60,6 +65,7 @@ bool UActionEffect_DealDamage::Apply_Implementation(const FActionContext& Contex
 	}
 
 	const float FinalHP = IActionAgentInterface::Execute_GetAttributeCurrentValue(Context.TargetActor, HealthTag);
+
 
 	// --- CUE (with pre/post HP snapshots so killing blow hit plays) ---
 	if (bPlayHitCue && AppliedDamage > 0.f)
@@ -151,6 +157,38 @@ bool UActionEffect_DealDamage::Apply_Implementation(const FActionContext& Contex
 		FinalHP,
 		AppliedDamage,
 		*GetNameSafe(Context.Instigator));
+
+	// Spawn floating damage number (single player)
+	if (AppliedDamage > 0.f)
+	{
+		if (UWorld* World = Context.TargetActor->GetWorld())
+		{
+			if (APlayerController* PC = World->GetFirstPlayerController())
+			{
+				if (AProdigyPlayerController* MyPC = Cast<AProdigyPlayerController>(PC))
+				{
+					if (ACharacter* TargetChar = Cast<ACharacter>(Context.TargetActor))
+					{
+						MyPC->ShowDamageNumber_Implementation(AppliedDamage, TargetChar);
+					}
+				}
+			}
+		}
+	}
+
+	if (UWorld* World = Context.TargetActor ? Context.TargetActor->GetWorld() : nullptr)
+	{
+		if (UWorldCombatEvents* Events = World->GetSubsystem<UWorldCombatEvents>())
+		{
+			Events->OnWorldDamageEvent.Broadcast(
+				Context.TargetActor,
+				Context.Instigator,
+				AppliedDamage,
+				OldHP,
+				FinalHP
+			);
+		}
+	}
 
 	return true;
 }
