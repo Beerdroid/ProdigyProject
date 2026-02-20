@@ -104,7 +104,10 @@ void AProdigyPlayerController::BeginPlay()
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("ProdigyPC BeginPlay: %s Local=%d Pawn=%s"),
-	       *GetNameSafe(this), IsLocalController(), *GetNameSafe(GetPawn()));
+		   *GetNameSafe(this), IsLocalController(), *GetNameSafe(GetPawn()));
+
+	// ✅ Ensure hotbar is visible at runtime
+	ShowHotbar();
 }
 
 bool AProdigyPlayerController::HandlePrimaryClickActor(AActor* ClickedActor)
@@ -1067,4 +1070,62 @@ void AProdigyPlayerController::UI_StartFight()
 void AProdigyPlayerController::UI_EndTurn()
 {
 	EndTurn();
+}
+
+
+void AProdigyPlayerController::ShowHotbar()
+{
+	if (!HotbarClass) return;
+
+	if (!IsValid(HotbarWidget))
+	{
+		HotbarWidget = CreateWidget<UUserWidget>(this, HotbarClass);
+		if (!IsValid(HotbarWidget)) return;
+
+		HotbarWidget->AddToViewport(1500);
+
+		GetWorldTimerManager().SetTimerForNextTick([this]()
+		{
+			if (!IsValid(HotbarWidget)) return;
+			PlaceSingleWidgetBottomCenter(this, HotbarWidget, /*BottomPaddingPx*/ 120.f);
+		});
+	}
+
+	HotbarWidget->SetVisibility(ESlateVisibility::Visible);
+	HotbarWidget->SetIsEnabled(true);
+
+	OnCombatHUDDirty.Broadcast();
+}
+
+void AProdigyPlayerController::HideHotbar()
+{
+	if (!IsValid(HotbarWidget)) return;
+	HotbarWidget->SetVisibility(ESlateVisibility::Collapsed);
+	HotbarWidget->SetIsEnabled(false);
+}
+
+void AProdigyPlayerController::ShowSpellBook()
+{
+	if (!SpellBookClass) return;
+
+	if (!IsValid(SpellBookWidget))
+	{
+		SpellBookWidget = CreateWidget<UUserWidget>(this, SpellBookClass);
+		if (!IsValid(SpellBookWidget)) return;
+
+		SpellBookWidget->AddToViewport(1600);
+		// You’ll place it however you want later (center, side, etc.)
+	}
+
+	SpellBookWidget->SetVisibility(ESlateVisibility::Visible);
+	SpellBookWidget->SetIsEnabled(true);
+
+	OnCombatHUDDirty.Broadcast();
+}
+
+void AProdigyPlayerController::HideSpellBook()
+{
+	if (!IsValid(SpellBookWidget)) return;
+	SpellBookWidget->SetVisibility(ESlateVisibility::Collapsed);
+	SpellBookWidget->SetIsEnabled(false);
 }
