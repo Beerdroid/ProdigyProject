@@ -66,6 +66,8 @@ bool UActionEffect_DealDamage::Apply_Implementation(const FActionContext& Contex
 
 	const float FinalHP = IActionAgentInterface::Execute_GetAttributeCurrentValue(Context.TargetActor, HealthTag);
 
+	// Compute "actual applied" HP loss after clamping/any internal rules
+	const float AppliedDamageForEvents = FMath::Max(0.f, OldHP - FinalHP);
 
 	// --- CUE (with pre/post HP snapshots so killing blow hit plays) ---
 	if (bPlayHitCue && AppliedDamage > 0.f)
@@ -151,30 +153,13 @@ bool UActionEffect_DealDamage::Apply_Implementation(const FActionContext& Contex
 	}
 
 	UE_LOG(LogActionExec, Warning,
-		TEXT("[DealDamage] %s HP %.2f -> %.2f (Damage=%.2f) Inst=%s"),
+		TEXT("[DealDamage] %s HP %.2f -> %.2f (Damage=%.2f Actual=%.2f) Inst=%s"),
 		*GetNameSafe(Context.TargetActor),
 		OldHP,
 		FinalHP,
 		AppliedDamage,
+		AppliedDamageForEvents,
 		*GetNameSafe(Context.Instigator));
-
-	// Spawn floating damage number (single player)
-	if (AppliedDamage > 0.f)
-	{
-		if (UWorld* World = Context.TargetActor->GetWorld())
-		{
-			if (APlayerController* PC = World->GetFirstPlayerController())
-			{
-				if (AProdigyPlayerController* MyPC = Cast<AProdigyPlayerController>(PC))
-				{
-					if (ACharacter* TargetChar = Cast<ACharacter>(Context.TargetActor))
-					{
-						MyPC->ShowDamageNumber_Implementation(AppliedDamage, TargetChar);
-					}
-				}
-			}
-		}
-	}
 
 	if (UWorld* World = Context.TargetActor ? Context.TargetActor->GetWorld() : nullptr)
 	{
@@ -183,7 +168,7 @@ bool UActionEffect_DealDamage::Apply_Implementation(const FActionContext& Contex
 			Events->OnWorldDamageEvent.Broadcast(
 				Context.TargetActor,
 				Context.Instigator,
-				AppliedDamage,
+				AppliedDamageForEvents,
 				OldHP,
 				FinalHP
 			);

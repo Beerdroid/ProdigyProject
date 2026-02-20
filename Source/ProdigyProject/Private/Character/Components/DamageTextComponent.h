@@ -16,4 +16,8 @@ public:
 	UFUNCTION(BlueprintImplementableEvent, BlueprintCallable, Category="Floating")
 	void SetDamageText(float Damage);
 
+	// NEW: heal flow (keeps existing damage flow intact)
+	UFUNCTION(BlueprintImplementableEvent, BlueprintCallable, Category="Floating")
+	void SetHealText(float Heal);
+
 };

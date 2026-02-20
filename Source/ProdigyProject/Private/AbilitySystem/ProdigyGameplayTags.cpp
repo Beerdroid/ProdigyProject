@@ -28,6 +28,12 @@ namespace ProdigyTags::Action::Social
 	UE_DEFINE_GAMEPLAY_TAG(Persuade,   "Action.Social.Persuade");
 }
 
+namespace ProdigyTags::Action::Heal
+{
+	UE_DEFINE_GAMEPLAY_TAG(Self, "Action.Heal.Self");
+	UE_DEFINE_GAMEPLAY_TAG(Target,   "Action.Heal.Target");
+}
+
 // =======================
 // STATUS TAGS
 // =======================

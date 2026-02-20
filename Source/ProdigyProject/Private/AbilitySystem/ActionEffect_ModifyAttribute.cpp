@@ -1,6 +1,9 @@
 ﻿#include "AbilitySystem/ActionEffect_ModifyAttribute.h"
 
 #include "AbilitySystem/ActionAgentInterface.h"
+#include "AbilitySystem/ProdigyGameplayTags.h"
+#include "AbilitySystem/WorldCombatEvents.h"
+
 
 AActor* UActionEffect_ModifyAttribute::ResolveTargetActor(const FActionContext& Context) const
 {
@@ -61,5 +64,54 @@ bool UActionEffect_ModifyAttribute::Apply_Implementation(const FActionContext& C
 
 	// Apply as delta (so attribute component broadcasts correctly)
 	const float FinalDelta = NewValue - OldValue;
-	return IActionAgentInterface::Execute_ModifyAttributeCurrentValue(A, AttributeTag, FinalDelta, Context.Instigator);
+
+	if (FMath::IsNearlyZero(FinalDelta))
+	{
+		return true;
+	}
+
+	const bool bOk = IActionAgentInterface::Execute_ModifyAttributeCurrentValue(
+		A, AttributeTag, FinalDelta, Context.Instigator);
+
+	if (!bOk) return false;
+
+	// --- World events for floating text (Health only) ---
+	if (AttributeTag.MatchesTagExact(ProdigyTags::Attr::Health))
+	{
+		UWorld* World = A->GetWorld();
+		if (World)
+		{
+			if (UWorldCombatEvents* Events = World->GetSubsystem<UWorldCombatEvents>())
+			{
+				const float NewHP = IActionAgentInterface::Execute_GetAttributeCurrentValue(A, AttributeTag);
+
+				// Positive delta = heal
+				if (FinalDelta > 0.f)
+				{
+					Events->OnWorldHealEvent.Broadcast(
+						A,
+						Context.Instigator,
+						FinalDelta,   // AppliedHeal
+						OldValue,     // OldHP
+						NewHP         // NewHP
+					);
+				}
+				// Negative delta = damage
+				else
+				{
+					const float AppliedDamage = FMath::Abs(FinalDelta);
+
+					Events->OnWorldDamageEvent.Broadcast(
+						A,
+						Context.Instigator,
+						AppliedDamage,
+						OldValue,
+						NewHP
+					);
+				}
+			}
+		}
+	}
+
+	return true;
 }
