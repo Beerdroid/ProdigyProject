@@ -13,6 +13,15 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_FiveParams(
 	float, NewHP
 );
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_FiveParams(
+	FOnWorldHealEvent,
+	AActor*, TargetActor,
+	AActor*, InstigatorActor,
+	float, AppliedHeal,
+	float, OldHP,
+	float, NewHP
+);
+
 UCLASS()
 class PRODIGYPROJECT_API UWorldCombatEvents : public UWorldSubsystem
 {
@@ -20,4 +29,7 @@ class PRODIGYPROJECT_API UWorldCombatEvents : public UWorldSubsystem
 public:
 	UPROPERTY(BlueprintAssignable)
 	FOnWorldDamageEvent OnWorldDamageEvent;
+
+	UPROPERTY(BlueprintAssignable)
+	FOnWorldHealEvent OnWorldHealEvent;
 };

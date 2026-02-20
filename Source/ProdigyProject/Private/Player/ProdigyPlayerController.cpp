@@ -7,6 +7,7 @@
 #include "AbilitySystem/EquipModSource.h"
 #include "AbilitySystem/ProdigyAbilityUtils.h"
 #include "AbilitySystem/ProdigyGameplayTags.h"
+#include "AbilitySystem/WorldCombatEvents.h"
 #include "Blueprint/UserWidget.h"
 #include "Character/Components/DamageTextComponent.h"
 #include "Character/Components/HealthBarWidgetComponent.h"
@@ -90,6 +91,18 @@ void AProdigyPlayerController::BeginPlay()
 	OnPossessedPawnChanged.RemoveDynamic(this, &ThisClass::HandlePossessedPawnChanged);
 	OnPossessedPawnChanged.AddDynamic(this, &ThisClass::HandlePossessedPawnChanged);
 
+	if (UWorld* World = GetWorld())
+	{
+		if (UWorldCombatEvents* Events = World->GetSubsystem<UWorldCombatEvents>())
+		{
+			Events->OnWorldDamageEvent.RemoveAll(this);
+			Events->OnWorldHealEvent.RemoveAll(this);
+
+			Events->OnWorldDamageEvent.AddDynamic(this, &ThisClass::HandleWorldDamageEvent);
+			Events->OnWorldHealEvent.AddDynamic(this, &ThisClass::HandleWorldHealEvent);
+		}
+	}
+
 	UE_LOG(LogTemp, Warning, TEXT("ProdigyPC BeginPlay: %s Local=%d Pawn=%s"),
 	       *GetNameSafe(this), IsLocalController(), *GetNameSafe(GetPawn()));
 }
@@ -140,6 +153,40 @@ void AProdigyPlayerController::CacheComponents()
 	       Inventory.Get(),
 	       *GetNameSafe(EquipmentComp.Get()),
 	       EquipmentComp.Get());
+}
+
+void AProdigyPlayerController::HandleWorldDamageEvent(
+	AActor* TargetActor,
+	AActor* InstigatorActor,
+	float AppliedDamage,
+	float OldHP,
+	float NewHP)
+{
+	if (!IsValid(TargetActor)) return;
+	if (AppliedDamage <= 0.f) return;
+
+	ACharacter* TargetChar = Cast<ACharacter>(TargetActor);
+	if (!IsValid(TargetChar)) return;
+
+	// Convention: positive = damage
+	ShowDamageNumber(AppliedDamage, TargetChar);
+}
+
+void AProdigyPlayerController::HandleWorldHealEvent(
+	AActor* TargetActor,
+	AActor* InstigatorActor,
+	float AppliedHeal,
+	float OldHP,
+	float NewHP)
+{
+	if (!IsValid(TargetActor)) return;
+	if (AppliedHeal <= 0.f) return;
+
+	ACharacter* TargetChar = Cast<ACharacter>(TargetActor);
+	if (!IsValid(TargetChar)) return;
+
+	// Convention: negative = heal (so ShowDamageNumber can route to SetHealText)
+	ShowDamageNumber(-AppliedHeal, TargetChar);
 }
 
 void AProdigyPlayerController::NotifyQuestsInventoryChanged()
@@ -254,27 +301,65 @@ void AProdigyPlayerController::SetParticipantsWorldHealthBarsVisible(bool bVisib
 	}
 }
 
-void AProdigyPlayerController::ShowDamageNumber_Implementation(float DamageAmount, ACharacter* TargetCharacter)
+void AProdigyPlayerController::ShowDamageNumber(float DamageAmount, ACharacter* TargetCharacter)
 {
 	if (!IsValid(TargetCharacter)) return;
 	if (!DamageTextComponentClass) return;
+
+	// 0 is noise
+	if (FMath::IsNearlyZero(DamageAmount)) return;
 
 	UDamageTextComponent* DamageText =
 		NewObject<UDamageTextComponent>(TargetCharacter, DamageTextComponentClass);
 
 	if (!IsValid(DamageText)) return;
 
-	// Attach first so it inherits the actor world + gets a sane transform basis
 	USceneComponent* Root = TargetCharacter->GetRootComponent();
 	if (!IsValid(Root)) return;
 
 	DamageText->RegisterComponent();
-	DamageText->AttachToComponent(TargetCharacter->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
-	const FVector WorldLoc = TargetCharacter->GetActorLocation() + FVector(0.f, 0.f, 130.f);
-	DamageText->SetWorldLocation(WorldLoc);
-	DamageText->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
-	DamageText->SetDamageText(DamageAmount);
+	DamageText->AttachToComponent(Root, FAttachmentTransformRules::KeepRelativeTransform);
 
+	// Small deterministic-enough jitter (single player) to avoid stacking texts perfectly
+	const float Side   = FMath::FRandRange(-25.f, 25.f);
+	const float Forward= FMath::FRandRange(-10.f, 10.f);
+	const float Up     = FMath::FRandRange(-8.f, 8.f);
+
+	const FVector WorldLoc = TargetCharacter->GetActorLocation() + FVector(Forward, Side, 130.f + Up);
+	DamageText->SetWorldLocation(WorldLoc);
+
+	DamageText->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+
+	// SIGN POLICY:
+	//  +X = damage
+	//  -X = heal
+	if (DamageAmount > 0.f)
+	{
+		DamageText->SetDamageText(DamageAmount);
+	}
+	else
+	{
+		DamageText->SetHealText(FMath::Abs(DamageAmount));
+	}
+
+	// Ensure we don't leak components if widget BP doesn't destroy itself
+	constexpr float FloatingTextLifeSeconds = 1.5f;
+	if (UWorld* World = TargetCharacter->GetWorld())
+	{
+		FTimerHandle Th;
+		World->GetTimerManager().SetTimer(
+			Th,
+			[DamageText]()
+			{
+				if (IsValid(DamageText))
+				{
+					DamageText->DestroyComponent();
+				}
+			},
+			FloatingTextLifeSeconds,
+			false
+		);
+	}
 }
 
 AActor* AProdigyPlayerController::GetActorUnderCursorForClick() const

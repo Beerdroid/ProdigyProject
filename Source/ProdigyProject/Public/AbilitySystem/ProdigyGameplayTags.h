@@ -32,6 +32,12 @@ namespace ProdigyTags::Action
 		UE_DECLARE_GAMEPLAY_TAG_EXTERN(Intimidate);
 		UE_DECLARE_GAMEPLAY_TAG_EXTERN(Persuade);
 	}
+
+	namespace Heal
+	{
+		UE_DECLARE_GAMEPLAY_TAG_EXTERN(Self);
+		UE_DECLARE_GAMEPLAY_TAG_EXTERN(Target);
+	}
 }
 
 // =======================

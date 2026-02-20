@@ -81,7 +81,14 @@ public:
 	UFUNCTION()
 	void SetParticipantsWorldHealthBarsVisible(bool bVisible);
 
-	void ShowDamageNumber_Implementation(float DamageAmount, ACharacter* TargetCharacter);
+	UFUNCTION()
+	void ShowDamageNumber(float DamageAmount, ACharacter* TargetCharacter);
+
+	UFUNCTION()
+	void HandleWorldDamageEvent(AActor* TargetActor, AActor* InstigatorActor, float AppliedDamage, float OldHP, float NewHP);
+
+	UFUNCTION()
+	void HandleWorldHealEvent(AActor* TargetActor, AActor* InstigatorActor, float AppliedHeal, float OldHP, float NewHP);
 
 	UPROPERTY(EditDefaultsOnly, Category="FloatingDamage")
 	TSubclassOf<class UDamageTextComponent> DamageTextComponentClass;
