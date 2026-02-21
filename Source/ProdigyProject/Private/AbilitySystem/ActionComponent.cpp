@@ -5,6 +5,7 @@
 #include "AbilitySystem/CombatSubsystem.h"
 #include "AbilitySystem/ProdigyAbilityUtils.h"
 #include "AbilitySystem/ProdigyGameplayTags.h"
+#include "AbilitySystem/WorldCombatEvents.h"
 
 UActionComponent::UActionComponent()
 {
@@ -369,7 +370,6 @@ bool UActionComponent::ExecuteAction(FGameplayTag ActionTag, const FActionContex
 	           bInCombat ? 1 : 0
 	);
 
-
 	const UActionDefinition* Def = FindDef(ActionTag);
 	if (!Def)
 	{
@@ -388,7 +388,7 @@ bool UActionComponent::ExecuteAction(FGameplayTag ActionTag, const FActionContex
 
 		ACTION_LOG(Log, TEXT("ExecuteAction BLOCKED: Reason=%s APCost=%d CDTurns=%d CDSec=%.2f"),
 			*ReasonStr, Q.APCost, Q.CooldownTurns, Q.CooldownSeconds);
-		
+
 		return false;
 	}
 
@@ -422,19 +422,19 @@ bool UActionComponent::ExecuteAction(FGameplayTag ActionTag, const FActionContex
 		}
 	}
 
-	// Apply effects
-	int32 AppliedEffects = 0;
+	// Apply effects (no semantics required on Apply() return)
+	int32 AttemptedEffects = 0;
+
 	for (const UActionEffect* E : Def->Effects)
 	{
 		if (!IsValid(E)) continue;
 
-		const bool bOk = E->Apply(Context);
-		AppliedEffects++;
+		(void)E->Apply(Context);
+		AttemptedEffects++;
 
 		ACTION_LOG(Verbose,
-		           TEXT("Effect Applied: %s Result=%d"),
-		           *GetNameSafe(E),
-		           bOk ? 1 : 0
+		           TEXT("Effect Executed: %s"),
+		           *GetNameSafe(E)
 		);
 	}
 
@@ -448,10 +448,24 @@ bool UActionComponent::ExecuteAction(FGameplayTag ActionTag, const FActionContex
 	StartCooldown(Def);
 
 	ACTION_LOG(Log,
-	           TEXT("ExecuteAction SUCCESS Tag=%s Effects=%d CooldownStarted"),
+	           TEXT("ExecuteAction SUCCESS Tag=%s EffectsAttempted=%d CooldownStarted"),
 	           *ActionTag.ToString(),
-	           AppliedEffects
+	           AttemptedEffects
 	);
+
+	// --- NEW: broadcast world event for "effect applied" ---
+	// This is intentionally simple: if we attempted any effect and have valid instigator+target, emit.
+	// CombatSubsystem will decide if/when to enter combat.
+	if (AttemptedEffects > 0 && IsValid(Context.Instigator) && IsValid(Context.TargetActor))
+	{
+		if (UWorld* World = GetWorld())
+		{
+			if (UWorldCombatEvents* Events = World->GetSubsystem<UWorldCombatEvents>())
+			{
+				Events->OnWorldEffectApplied.Broadcast(Context.TargetActor, Context.Instigator, ActionTag);
+			}
+		}
+	}
 
 	OnActionExecuted.Broadcast(ActionTag, Context);
 	return true;

@@ -79,7 +79,22 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Combat|Query")
 	AActor* GetCurrentTurnActor_BP() const { return GetCurrentTurnActor(); }
 
-	
+	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
+	virtual void Deinitialize() override;
+
+	void TryBindToWorldEvents(UWorld* World);
+	void HandlePostWorldInitialization(UWorld* World, const UWorld::InitializationValues IVS);
+
+	UFUNCTION()
+	void HandleCombatStartRequested(AActor* AggroActor, AActor* TargetActor, AActor* FirstToAct);
+
+	// NEW: damage fallback -> request combat
+	UFUNCTION()
+	void HandleWorldDamageEvent(AActor* TargetActor, AActor* InstigatorActor, float AppliedDamage, float OldHP, float NewHP);
+
+	UFUNCTION()
+	void HandleWorldEffectApplied(AActor* TargetActor, AActor* InstigatorActor, FGameplayTag ActionTag);
+
 private:
 
 	FTimerHandle TimerHandle_BeginTurn;
@@ -87,6 +102,11 @@ private:
 
 	void CancelScheduledBeginTurn();
 	void HandleScheduledBeginTurn();
+
+	void BuildParticipantsForAggro(AActor* AggroActor, AActor* PlayerPawn, TArray<AActor*>& OutParticipants) const;
+
+	// NEW: resolve single player pawn for “player first”
+	AActor* ResolveSinglePlayerPawn() const;
 
 	int32 PendingTurnIndex = INDEX_NONE;
 	
@@ -96,5 +116,9 @@ private:
 
 	UPROPERTY()
 	bool bAdvancingTurn = false;
+
+	bool bBoundToWorldEvents = false;
+
+	TWeakObjectPtr<class UWorldCombatEvents> BoundWorldEvents;
 };
 

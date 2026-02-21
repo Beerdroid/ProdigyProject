@@ -922,7 +922,6 @@ void AProdigyPlayerController::ValidateCombatHUDVisibility()
 		return;
 	}
 
-	// Helper: ensure widget exists but do NOT force visible
 	auto EnsureHUD = [this]()
 	{
 		if (IsValid(CombatHUD) || !CombatHUDClass) return;
@@ -938,71 +937,20 @@ void AProdigyPlayerController::ValidateCombatHUDVisibility()
 			PlaceSingleWidgetBottomCenter(this, CombatHUD, /*BottomPaddingPx*/ 300.f);
 		});
 
-		// Start hidden until we decide otherwise
 		CombatHUD->SetVisibility(ESlateVisibility::Collapsed);
 		CombatHUD->SetIsEnabled(false);
 	};
 
 	UCombatSubsystem* Combat = GetCombatSubsystem();
 
-	bool bShouldShow = false;
+	// Rule: combat HUD ONLY when combat is active
+	const bool bShouldShow = (Combat && Combat->IsInCombat());
 
-	// A) In combat: show if there's at least one enemy participant.
-	// (Optional: also require that *I* am one of the participants, using controller ownership, not pointer equality.)
-	if (Combat && Combat->IsInCombat())
-	{
-		const TArray<TWeakObjectPtr<AActor>> Parts = Combat->GetParticipants();
-
-		bool bHasMe = false;
-		bool bHasEnemy = false;
-
-		for (const TWeakObjectPtr<AActor>& W : Parts)
-		{
-			AActor* A = W.Get();
-			if (!IsValid(A)) continue;
-
-			APawn* OwnPawn = Cast<APawn>(A);
-
-			// "Me" detection: either the pawn pointer matches OR it is controlled by this PC.
-			if (OwnPawn && (OwnPawn == MyPawn || OwnPawn->GetController() == this))
-			{
-				bHasMe = true;
-				continue;
-			}
-
-			// Enemy detection:
-			// - Non-player-controlled pawn counts as enemy
-			// - Non-pawn combatants count as enemy too (safe default for HUD)
-			const bool bIsPlayerControlled = OwnPawn && OwnPawn->IsPlayerControlled();
-			if (!bIsPlayerControlled)
-			{
-				bHasEnemy = true;
-			}
-		}
-
-		// If you don't care about bHasMe, just do: bShouldShow = bHasEnemy;
-		bShouldShow = bHasMe && bHasEnemy;
-	}
-	else
-	{
-		// B) Pre-combat: show if valid locked target and not dead
-		AActor* T = LockedTarget.Get();
-		if (IsValid(T))
-		{
-			if (!bOnlyLockCombatants || T->GetClass()->ImplementsInterface(UCombatantInterface::StaticClass()))
-			{
-				bShouldShow = !ProdigyAbilityUtils::IsDeadByAttributes(T);
-			}
-		}
-	}
-
-	// If we might show, make sure it exists
 	if (bShouldShow)
 	{
 		EnsureHUD();
 	}
 
-	// Apply state
 	if (bShouldShow && IsValid(CombatHUD))
 	{
 		CombatHUD->SetVisibility(ESlateVisibility::Visible);
