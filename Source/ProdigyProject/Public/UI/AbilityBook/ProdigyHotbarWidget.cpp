@@ -1,10 +1,12 @@
 ﻿#include "ProdigyHotbarWidget.h"
 
+#include "ProdigyHotbarDragDropOp.h"
 #include "Components/PanelWidget.h"
 
 #include "ProdigyHotbarSlotWidget.h"
 #include "Components/HorizontalBox.h"
 #include "Player/ProdigyPlayerController.h"
+
 
 void UProdigyHotbarWidget::NativeConstruct()
 {
@@ -194,4 +196,32 @@ void UProdigyHotbarWidget::RebuildSlots()
 		SlotRow->AddChildToHorizontalBox(W);
 		SlotWidgets.Add(W);
 	}
+}
+
+void UProdigyHotbarWidget::SwapSlots(int32 A, int32 B)
+{
+	if (!IsValidSlotIndex(A) || !IsValidSlotIndex(B)) return;
+	if (A == B) return;
+
+	UE_LOG(LogTemp, Warning, TEXT("[Hotbar] SwapSlots A=%d B=%d"), A, B);
+
+	Entries.Swap(A, B);
+
+	// Refresh visuals immediately
+	RefreshAllSlots();
+}
+
+bool UProdigyHotbarWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent,
+	UDragDropOperation* InOperation)
+{
+	// If you drop inside the hotbar bounds (but not on a slot),
+	// treat it as handled so DragCancelled will NOT clear.
+	if (UProdigyHotbarDragDropOp* HOp = Cast<UProdigyHotbarDragDropOp>(InOperation))
+	{
+		HOp->bDropHandled = true;
+		UE_LOG(LogTemp, Warning, TEXT("[Hotbar Root Drop] handled inside hotbar (no slot) Src=%d"), HOp->SourceIndex);
+		return true;
+	}
+
+	return Super::NativeOnDrop(InGeometry, InDragDropEvent, InOperation);
 }

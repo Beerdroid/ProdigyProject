@@ -79,7 +79,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Hotbar")
 	void RebuildSlots();
 
+	UFUNCTION(BlueprintCallable, Category="Hotbar")
+	void SwapSlots(int32 A, int32 B);
+
 protected:
+	virtual bool NativeOnDrop(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation) override;
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
 

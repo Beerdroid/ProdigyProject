@@ -13,6 +13,9 @@
 
 #include "ProdigyAbilityDragDropOp.h"
 #include "ProdigyAbilityTooltipWidget.h"
+#include "ProdigyHotbarDragDropOp.h"
+#include "ProdigyHotbarDragVisualWidget.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"
 #include "ProdigyInventory/InvDragDropOp.h"
 
 void UProdigyHotbarSlotWidget::InitSlot(UProdigyHotbarWidget* InOwner, int32 InSlotIndex)
@@ -204,6 +207,39 @@ bool UProdigyHotbarSlotWidget::NativeOnDrop(
 		return false;
 	}
 
+	// ===== Hotbar slot drag (swap) =====
+	if (UProdigyHotbarDragDropOp* HOp = Cast<UProdigyHotbarDragDropOp>(InOperation))
+	{
+		UProdigyHotbarWidget* SrcHB = HOp->SourceHotbar.Get();
+		if (!IsValid(SrcHB) || !OwnerHotbar.IsValid() || SlotIndex == INDEX_NONE)
+		{
+			return false;
+		}
+
+		// Only allow swapping within the same hotbar instance
+		if (SrcHB != OwnerHotbar.Get())
+		{
+			return false;
+		}
+
+		const int32 Src = HOp->SourceIndex;
+		const int32 Dst = SlotIndex;
+
+		UE_LOG(LogTemp, Warning, TEXT("[HotbarSlot Drop] HotbarSwap Src=%d Dst=%d"), Src, Dst);
+
+		// Drop on itself => count as handled (prevents drag-cancel clearing)
+		if (Src == INDEX_NONE || Src == Dst)
+		{
+			HOp->bDropHandled = true;
+			return true;
+		}
+
+		OwnerHotbar->SwapSlots(Src, Dst);
+
+		HOp->bDropHandled = true;
+		return true;
+	}
+
 	// ===== Ability drag =====
 	if (UProdigyAbilityDragDropOp* AOp = Cast<UProdigyAbilityDragDropOp>(InOperation))
 	{
@@ -240,6 +276,115 @@ bool UProdigyHotbarSlotWidget::NativeOnDrop(
 	return false;
 }
 
+FReply UProdigyHotbarSlotWidget::NativeOnPreviewMouseButtonDown(
+	const FGeometry& InGeometry,
+	const FPointerEvent& InMouseEvent)
+{
+	// Let clicks still work via SlotButton, but detect drag on preview.
+	// Preview gets the event before children (Button), so this is reliable.
+
+	if (!OwnerHotbar.IsValid() || SlotIndex == INDEX_NONE)
+	{
+		return Super::NativeOnPreviewMouseButtonDown(InGeometry, InMouseEvent);
+	}
+
+	if (InMouseEvent.GetEffectingButton() != EKeys::LeftMouseButton)
+	{
+		return Super::NativeOnPreviewMouseButtonDown(InGeometry, InMouseEvent);
+	}
+
+	const FProdigyHotbarEntry E = OwnerHotbar->GetSlotEntry(SlotIndex);
+
+	// Drag only if this slot actually has something assigned and is enabled
+	if (!E.bEnabled || E.Type == EProdigyHotbarEntryType::None)
+	{
+		return Super::NativeOnPreviewMouseButtonDown(InGeometry, InMouseEvent);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[HotbarSlot] DetectDragIfPressed Slot=%d Type=%d"),
+		SlotIndex, (int32)E.Type);
+
+	return UWidgetBlueprintLibrary::DetectDragIfPressed(InMouseEvent, this, EKeys::LeftMouseButton).NativeReply;
+}
+
+void UProdigyHotbarSlotWidget::NativeOnDragDetected(
+	const FGeometry& InGeometry,
+	const FPointerEvent& InMouseEvent,
+	UDragDropOperation*& OutOperation)
+{
+OutOperation = nullptr;
+
+	if (!OwnerHotbar.IsValid() || SlotIndex == INDEX_NONE) return;
+
+	const FProdigyHotbarEntry E = OwnerHotbar->GetSlotEntry(SlotIndex);
+	if (!E.bEnabled || E.Type == EProdigyHotbarEntryType::None) return;
+
+	UProdigyHotbarDragDropOp* Op = NewObject<UProdigyHotbarDragDropOp>(this);
+	if (!Op) return;
+
+	Op->SourceHotbar = OwnerHotbar;
+	Op->SourceIndex  = SlotIndex;
+	Op->DraggedEntry = E;
+	Op->Pivot        = EDragPivot::MouseDown;
+
+	UProdigyHotbarDragVisualWidget* Ghost = nullptr;
+
+	if (HotbarDragVisualClass)
+	{
+		Ghost = CreateWidget<UProdigyHotbarDragVisualWidget>(GetOwningPlayer(), HotbarDragVisualClass);
+		if (Ghost)
+		{
+			// Fill icon/qty based on entry type
+			if (E.Type == EProdigyHotbarEntryType::Ability && E.AbilityTag.IsValid())
+			{
+				AProdigyPlayerController* PC = GetOwningPlayer<AProdigyPlayerController>();
+				APawn* P = PC ? PC->GetPawn() : nullptr;
+				UActionComponent* AC = P ? P->FindComponentByClass<UActionComponent>() : nullptr;
+
+				UActionDefinition* Def = nullptr;
+				if (AC && AC->TryGetActionDefinition(E.AbilityTag, Def) && Def)
+				{
+					Ghost->SetIcon(Def->Icon);
+				}
+
+				Ghost->SetQuantity(0); // hide qty
+			}
+			else if (E.Type == EProdigyHotbarEntryType::Item && !E.ItemID.IsNone())
+			{
+				AProdigyPlayerController* PC = GetOwningPlayer<AProdigyPlayerController>();
+				if (PC)
+				{
+					PC->EnsurePlayerInventoryResolved();
+					UInventoryComponent* Inv = PC->InventoryComponent.Get();
+
+					if (Inv)
+					{
+						FItemRow Row;
+						if (Inv->TryGetItemDef(E.ItemID, Row))
+						{
+							UTexture2D* Icon = Row.Icon.LoadSynchronous();
+							Ghost->SetIcon(Icon);
+						}
+
+						const int32 TotalQty = Inv->GetTotalQuantityByItemID(E.ItemID);
+						Ghost->SetQuantity(TotalQty);
+					}
+				}
+			}
+
+			Op->DefaultDragVisual = Ghost;
+		}
+	}
+
+	OutOperation = Op;
+
+	UE_LOG(LogTemp, Warning, TEXT("[HotbarSlot DragDetected] Src=%d Type=%d Tag=%s Item=%s"),
+		SlotIndex,
+		(int32)E.Type,
+		E.AbilityTag.IsValid() ? *E.AbilityTag.ToString() : TEXT("<INVALID>"),
+		E.ItemID.IsNone() ? TEXT("<NONE>") : *E.ItemID.ToString());
+}
+
 void UProdigyHotbarSlotWidget::Refresh()
 {
 	AProdigyPlayerController* PC = GetOwningPlayer<AProdigyPlayerController>();
@@ -247,32 +392,44 @@ void UProdigyHotbarSlotWidget::Refresh()
 	FText CdText = FText::GetEmpty();
 	CachedQuantity = 0;
 
+	// ALWAYS reset per-refresh transient visuals first
+	if (CooldownText)
+	{
+		CooldownText->SetText(FText::GetEmpty());
+		CooldownText->SetVisibility(ESlateVisibility::Hidden);
+	}
+
+	if (QtyText)
+	{
+		QtyText->SetText(FText::GetEmpty());
+		QtyText->SetVisibility(ESlateVisibility::Hidden);
+	}
+
+	// Tooltips: ability tooltip is a widget, item tooltip is SetToolTipText
+	// We only keep ability tooltip when showing an ability.
+	ClearAbilityTooltip();
+	SetToolTipText(FText::GetEmpty());
+
 	if (!OwnerHotbar.IsValid() || SlotIndex == INDEX_NONE)
 	{
+		if (IconImage) IconImage->SetBrushFromTexture(nullptr, true);
 		ApplyVisuals(false, CdText);
 		return;
 	}
 
 	const FProdigyHotbarEntry E = OwnerHotbar->GetSlotEntry(SlotIndex);
+
 	if (!E.bEnabled)
 	{
-		// keep slot visible but non-interactive
 		if (IconImage) IconImage->SetBrushFromTexture(nullptr, true);
-		if (QtyText) { QtyText->SetText(FText::GetEmpty()); QtyText->SetVisibility(ESlateVisibility::Hidden); }
-		ClearAbilityTooltip();
 		ApplyVisuals(false, FText::GetEmpty());
 		return;
 	}
 
-	// Empty slot: disable
+	// Empty slot
 	if (E.Type == EProdigyHotbarEntryType::None)
 	{
 		if (IconImage) IconImage->SetBrushFromTexture(nullptr, true);
-		if (QtyText)
-		{
-			QtyText->SetText(FText::GetEmpty());
-			QtyText->SetVisibility(ESlateVisibility::Hidden);
-		}
 		ApplyVisuals(false, CdText);
 		return;
 	}
@@ -294,6 +451,7 @@ void UProdigyHotbarSlotWidget::Refresh()
 	{
 		if (!PC || !P || !E.AbilityTag.IsValid())
 		{
+			if (IconImage) IconImage->SetBrushFromTexture(nullptr, true);
 			ApplyVisuals(false, CdText);
 			return;
 		}
@@ -301,6 +459,7 @@ void UProdigyHotbarSlotWidget::Refresh()
 		UActionComponent* AC = P->FindComponentByClass<UActionComponent>();
 		if (!IsValid(AC))
 		{
+			if (IconImage) IconImage->SetBrushFromTexture(nullptr, true);
 			ApplyVisuals(false, CdText);
 			return;
 		}
@@ -308,16 +467,23 @@ void UProdigyHotbarSlotWidget::Refresh()
 		UActionDefinition* Def = nullptr;
 		if (!AC->TryGetActionDefinition(E.AbilityTag, Def) || !Def)
 		{
-			ClearAbilityTooltip();
+			if (IconImage) IconImage->SetBrushFromTexture(nullptr, true);
 			ApplyVisuals(false, CdText);
 			return;
 		}
 
-		// Icon + tooltip widget
+		// Icon + ability tooltip
 		if (IconImage) IconImage->SetBrushFromTexture(Def->Icon, true);
 		UpdateAbilityTooltip(Def);
 
-		// Avoid invalid-target cue spam: pre-check target validity for Unit/Self
+		// Ensure Qty stays hidden for abilities (critical bug fix)
+		if (QtyText)
+		{
+			QtyText->SetText(FText::GetEmpty());
+			QtyText->SetVisibility(ESlateVisibility::Hidden);
+		}
+
+		// Avoid invalid-target cue spam
 		FActionContext Ctx;
 		Ctx.Instigator  = P;
 		Ctx.TargetActor = PC->GetLockedTarget();
@@ -377,6 +543,7 @@ void UProdigyHotbarSlotWidget::Refresh()
 	{
 		if (!PC || !P || E.ItemID.IsNone())
 		{
+			if (IconImage) IconImage->SetBrushFromTexture(nullptr, true);
 			ApplyVisuals(false, CdText);
 			return;
 		}
@@ -385,6 +552,7 @@ void UProdigyHotbarSlotWidget::Refresh()
 		UInventoryComponent* Inv = PC->InventoryComponent.Get();
 		if (!IsValid(Inv))
 		{
+			if (IconImage) IconImage->SetBrushFromTexture(nullptr, true);
 			ApplyVisuals(false, CdText);
 			return;
 		}
@@ -396,14 +564,9 @@ void UProdigyHotbarSlotWidget::Refresh()
 			UTexture2D* Icon = Row.Icon.LoadSynchronous();
 			if (IconImage) IconImage->SetBrushFromTexture(Icon, true);
 
-			if (!Row.DisplayName.IsEmpty())
-			{
-				SetToolTipText(Row.DisplayName);
-			}
-			else
-			{
-				SetToolTipText(FText::FromString(E.ItemID.ToString()));
-			}
+			SetToolTipText(!Row.DisplayName.IsEmpty()
+				? Row.DisplayName
+				: FText::FromString(E.ItemID.ToString()));
 		}
 		else
 		{
@@ -428,11 +591,11 @@ void UProdigyHotbarSlotWidget::Refresh()
 			}
 		}
 
-		// Item cooldown not implemented yet (you said not critical)
 		ApplyVisuals(bEnabled, CdText);
 		return;
 	}
 
+	if (IconImage) IconImage->SetBrushFromTexture(nullptr, true);
 	ApplyVisuals(false, CdText);
 }
 

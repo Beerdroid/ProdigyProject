@@ -938,7 +938,7 @@ void AProdigyPlayerController::ValidateCombatHUDVisibility()
 		GetWorldTimerManager().SetTimerForNextTick([this]()
 		{
 			if (!IsValid(CombatHUD)) return;
-			PlaceSingleWidgetBottomCenter(this, CombatHUD, /*BottomPaddingPx*/ 200.f);
+			PlaceSingleWidgetBottomCenter(this, CombatHUD, /*BottomPaddingPx*/ 300.f);
 		});
 
 		// Start hidden until we decide otherwise
@@ -1080,17 +1080,21 @@ void AProdigyPlayerController::ShowHotbar()
 
 		HotbarWidget->AddToViewport(1500);
 
+		// Position next tick after layout pass
 		GetWorldTimerManager().SetTimerForNextTick([this]()
 		{
 			if (!IsValid(HotbarWidget)) return;
-			PlaceSingleWidgetBottomCenter(this, HotbarWidget, /*BottomPaddingPx*/ 120.f);
+
+			PlaceSingleWidgetBottomCenter(
+				this,
+				HotbarWidget,
+				/*BottomPaddingPx*/ 120.f
+			);
 		});
 	}
 
 	HotbarWidget->SetVisibility(ESlateVisibility::Visible);
 	HotbarWidget->SetIsEnabled(true);
-
-	OnCombatHUDDirty.Broadcast();
 }
 
 void AProdigyPlayerController::HideHotbar()
