@@ -47,3 +47,36 @@ FORCEINLINE void PlaceSingleWidgetBottomCenter(
 	Widget->SetAlignmentInViewport(FVector2D(0.f, 0.f));
 	Widget->SetPositionInViewport(Pos, bRemoveDPIScale);
 }
+
+FORCEINLINE void PlaceSingleWidgetCenter(
+	APlayerController* PC,
+	UUserWidget* Widget,
+	FVector2D CenterOffsetPx = FVector2D::ZeroVector,
+	FVector2D PaddingPx = FVector2D(16.f, 16.f),
+	bool bRemoveDPIScale = true)
+{
+	if (!IsValid(PC) || !IsValid(Widget)) return;
+
+	int32 VX = 0, VY = 0;
+	PC->GetViewportSize(VX, VY);
+	if (VX <= 0 || VY <= 0) return;
+
+	const FVector2D ViewportSize((float)VX, (float)VY);
+
+	Widget->ForceLayoutPrepass();
+	const FVector2D Size = Widget->GetDesiredSize();
+	if (Size.IsNearlyZero()) return;
+
+	const FVector2D ViewportCenter(ViewportSize.X * 0.5f, ViewportSize.Y * 0.5f);
+
+	// Position is top-left when Alignment is (0,0)
+	FVector2D Pos(
+		ViewportCenter.X - (Size.X * 0.5f) + CenterOffsetPx.X,
+		ViewportCenter.Y - (Size.Y * 0.5f) + CenterOffsetPx.Y
+	);
+
+	Pos = ClampWidgetPosToViewport(Pos, Size, ViewportSize, PaddingPx);
+
+	Widget->SetAlignmentInViewport(FVector2D(0.f, 0.f));
+	Widget->SetPositionInViewport(Pos, bRemoveDPIScale);
+}

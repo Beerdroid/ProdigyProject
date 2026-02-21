@@ -175,6 +175,30 @@ public:
 	UFUNCTION()
 	void ValidateCombatHUDVisibility();
 
+	UPROPERTY(EditDefaultsOnly, Category="UI")
+	TSubclassOf<UUserWidget> HotbarClass;
+
+	UPROPERTY(EditDefaultsOnly, Category="UI")
+	TSubclassOf<UUserWidget> SpellBookClass;
+
+	UPROPERTY()
+	TObjectPtr<UUserWidget> HotbarWidget;
+
+	UPROPERTY()
+	TObjectPtr<UUserWidget> SpellBookWidget;
+
+	UFUNCTION(BlueprintCallable, Category="UI")
+	void ShowHotbar();
+
+	UFUNCTION(BlueprintCallable, Category="UI")
+	void HideHotbar();
+
+	UFUNCTION(BlueprintCallable, Category="UI")
+	void ShowSpellBook();
+
+	UFUNCTION(BlueprintCallable, Category="UI")
+	void HideSpellBook();
+
 protected:
 	// Add in BP child if you prefer; these will auto-find if present.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Quest")

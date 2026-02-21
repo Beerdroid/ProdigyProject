@@ -104,7 +104,10 @@ void AProdigyPlayerController::BeginPlay()
 	}
 
 	UE_LOG(LogTemp, Warning, TEXT("ProdigyPC BeginPlay: %s Local=%d Pawn=%s"),
-	       *GetNameSafe(this), IsLocalController(), *GetNameSafe(GetPawn()));
+		   *GetNameSafe(this), IsLocalController(), *GetNameSafe(GetPawn()));
+
+	// ✅ Ensure hotbar is visible at runtime
+	ShowHotbar();
 }
 
 bool AProdigyPlayerController::HandlePrimaryClickActor(AActor* ClickedActor)
@@ -392,15 +395,12 @@ bool AProdigyPlayerController::TryLockTarget(AActor* Candidate)
 		return false;
 	}
 
-	// Toggle off
+	// Same target clicked again => keep lock (do NOT toggle off)
 	if (LockedTarget == Candidate)
 	{
-		TARGET_LOG(Log,
-		           TEXT("TryLockTarget: toggle off %s"),
-		           *GetNameSafe(Candidate)
-		);
-		ClearLockedTarget();
-		return true;
+		TARGET_LOG(Verbose, TEXT("TryLockTarget: same target clicked again, keep lock -> %s"),
+			*GetNameSafe(Candidate));
+		return true; // consume click, keep current lock
 	}
 
 	TARGET_LOG(Log,
@@ -853,6 +853,7 @@ void AProdigyPlayerController::ShowCombatHUD()
 {
 	if (!CombatHUDClass) return;
 
+	// Create only (placement is centralized in ValidateCombatHUDVisibility -> EnsureHUD)
 	if (!IsValid(CombatHUD))
 	{
 		CombatHUD = CreateWidget<UUserWidget>(this, CombatHUDClass);
@@ -860,18 +861,13 @@ void AProdigyPlayerController::ShowCombatHUD()
 
 		CombatHUD->AddToViewport(2000);
 
-		GetWorldTimerManager().SetTimerForNextTick([this]()
-		{
-			if (!IsValid(CombatHUD)) return;
-			PlaceSingleWidgetBottomCenter(this, CombatHUD, /*BottomPaddingPx*/ 32.f);
-		});
+		// Start hidden; ValidateCombatHUDVisibility will decide + place
+		CombatHUD->SetVisibility(ESlateVisibility::Collapsed);
+		CombatHUD->SetIsEnabled(false);
 	}
 
-	// IMPORTANT: no ValidateCombatHUDVisibility() here
-	CombatHUD->SetVisibility(ESlateVisibility::Visible);
-	CombatHUD->SetIsEnabled(true);
-
-	OnCombatHUDDirty.Broadcast();
+	// Just ensure correct state
+	ValidateCombatHUDVisibility();
 }
 
 void AProdigyPlayerController::HideCombatHUD()
@@ -939,7 +935,7 @@ void AProdigyPlayerController::ValidateCombatHUDVisibility()
 		GetWorldTimerManager().SetTimerForNextTick([this]()
 		{
 			if (!IsValid(CombatHUD)) return;
-			PlaceSingleWidgetBottomCenter(this, CombatHUD, /*BottomPaddingPx*/ 32.f);
+			PlaceSingleWidgetBottomCenter(this, CombatHUD, /*BottomPaddingPx*/ 300.f);
 		});
 
 		// Start hidden until we decide otherwise
@@ -1067,4 +1063,71 @@ void AProdigyPlayerController::UI_StartFight()
 void AProdigyPlayerController::UI_EndTurn()
 {
 	EndTurn();
+}
+
+
+void AProdigyPlayerController::ShowHotbar()
+{
+	if (!HotbarClass) return;
+
+	if (!IsValid(HotbarWidget))
+	{
+		HotbarWidget = CreateWidget<UUserWidget>(this, HotbarClass);
+		if (!IsValid(HotbarWidget)) return;
+
+		HotbarWidget->AddToViewport(1500);
+
+		// Position next tick after layout pass
+		GetWorldTimerManager().SetTimerForNextTick([this]()
+		{
+			if (!IsValid(HotbarWidget)) return;
+
+			PlaceSingleWidgetBottomCenter(
+				this,
+				HotbarWidget,
+				/*BottomPaddingPx*/ 120.f
+			);
+		});
+	}
+
+	HotbarWidget->SetVisibility(ESlateVisibility::Visible);
+	HotbarWidget->SetIsEnabled(true);
+}
+
+void AProdigyPlayerController::HideHotbar()
+{
+	if (!IsValid(HotbarWidget)) return;
+	HotbarWidget->SetVisibility(ESlateVisibility::Collapsed);
+	HotbarWidget->SetIsEnabled(false);
+}
+
+void AProdigyPlayerController::ShowSpellBook()
+{
+	if (!SpellBookClass) return;
+
+	if (!IsValid(SpellBookWidget))
+	{
+		SpellBookWidget = CreateWidget<UUserWidget>(this, SpellBookClass);
+		if (!IsValid(SpellBookWidget)) return;
+
+		SpellBookWidget->AddToViewport(1600);
+
+		GetWorldTimerManager().SetTimerForNextTick([this]()
+		{
+			if (!IsValid(SpellBookWidget)) return;
+			PlaceSingleWidgetCenter(this, SpellBookWidget, /*CenterOffsetPx*/ FVector2D::ZeroVector);
+		});
+	}
+
+	SpellBookWidget->SetVisibility(ESlateVisibility::Visible);
+	SpellBookWidget->SetIsEnabled(true);
+
+	OnCombatHUDDirty.Broadcast();
+}
+
+void AProdigyPlayerController::HideSpellBook()
+{
+	if (!IsValid(SpellBookWidget)) return;
+	SpellBookWidget->SetVisibility(ESlateVisibility::Collapsed);
+	SpellBookWidget->SetIsEnabled(false);
 }

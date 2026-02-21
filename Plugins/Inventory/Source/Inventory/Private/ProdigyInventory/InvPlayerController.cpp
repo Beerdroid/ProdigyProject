@@ -692,22 +692,30 @@ void AInvPlayerController::TickPendingPickup()
 
 void AInvPlayerController::OnSetDestinationStarted()
 {
-	// LMB is movement-only. Do NOT attempt pickup here.
+	// Reset state
 	bBlockMoveThisClick = false;
+	bPendingClick = false;
 
-	// Cancel any pending pickup started by RMB if you want LMB to override intent
-	// (optional, but usually desired)
+	// Optional: LMB overrides any RMB pickup intent
 	ClearPendingPickup();
 
+	// Stop any SimpleMove + clear velocity intent
 	StopMovement();
 
 	PressStartTimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
 
+	// Cache click location (used for click-move)
 	FVector Loc;
 	if (GetLocationUnderCursor(Loc))
 	{
 		CachedDestination = Loc;
+		PendingClickLocation = Loc;
+		bPendingClick = true;
 	}
+
+	UE_LOG(LogTemp, Verbose, TEXT("[Move] Started PendingClick=%d Dest=%s"),
+		bPendingClick ? 1 : 0,
+		*PendingClickLocation.ToString());
 }
 
 void AInvPlayerController::OnSetDestinationTriggered()
@@ -716,6 +724,18 @@ void AInvPlayerController::OnSetDestinationTriggered()
 	{
 		return;
 	}
+
+	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+	const float HeldSeconds = static_cast<float>(Now - PressStartTimeSeconds);
+
+	// ✅ Do NOT follow until it's a hold
+	if (HeldSeconds < PressedThreshold)
+	{
+		return;
+	}
+
+	// Once it's a hold, it's no longer a "click"
+	bPendingClick = false;
 
 	FVector Loc;
 	if (GetLocationUnderCursor(Loc))
@@ -730,28 +750,43 @@ void AInvPlayerController::OnSetDestinationCompleted()
 	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
 	const float HeldSeconds = static_cast<float>(Now - PressStartTimeSeconds);
 
-	// LMB always cancels any pending pickup intent (RMB could start it, etc.)
+	// Always cancel pending pickup on LMB release
 	ClearPendingPickup();
 
-	// Hold -> Follow already handled in Triggered()
+	UE_LOG(LogTemp, Verbose, TEXT("[Move] Completed Held=%.3f PendingClick=%d Block=%d"),
+		HeldSeconds,
+		bPendingClick ? 1 : 0,
+		bBlockMoveThisClick ? 1 : 0);
+
+	// If this was a HOLD, Triggered() already handled Follow()
 	if (HeldSeconds >= PressedThreshold)
 	{
 		bBlockMoveThisClick = false;
+		bPendingClick = false;
 		return;
 	}
 
-	// Short click: try target lock first, otherwise move
+	// Short click: try target lock first
 	AActor* Clicked = GetActorUnderCursorForClick();
+
+	UE_LOG(LogTemp, Verbose, TEXT("[Move] Click Candidate=%s"), *GetNameSafe(Clicked));
 
 	if (HandlePrimaryClickActor(Clicked))
 	{
-		// click consumed by targeting; do NOT move
+		// Click consumed by targeting; do NOT move
 		bBlockMoveThisClick = true;
+
+		// Cancel any move impulses
 		StopMovement();
+		bPendingClick = false;
+
 		return;
 	}
 
+	// Not consumed => click-to-move
 	bBlockMoveThisClick = false;
+	bPendingClick = false;
+
 	MoveTo(CachedDestination);
 }
 
