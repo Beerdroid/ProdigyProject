@@ -6,6 +6,7 @@
 #include "AbilitySystem/ActionDefinition.h"
 #include "ProdigySpellBookSlotWidget.generated.h"
 
+class UProdigyAbilityDragVisualWidget;
 class UProdigyAbilityTooltipWidget;
 class UProdigySpellBookWidget;
 class UButton;
@@ -45,23 +46,27 @@ public:
 	void SetAbilityTag(FGameplayTag InAbilityTag);
 	void BindOwnerSpellBook(UProdigySpellBookWidget* InOwner);
 
+	UPROPERTY(EditDefaultsOnly, Category="SpellBook|Drag")
+	TSubclassOf<UProdigyAbilityDragVisualWidget> DragVisualClass;
+
 protected:
 	virtual void NativeConstruct() override;
 
 	UPROPERTY(EditDefaultsOnly, Category="SpellBook|Tooltip")
 	TSubclassOf<UProdigyAbilityTooltipWidget> AbilityTooltipClass;
 
-	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+	virtual FReply NativeOnPreviewMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 	virtual void NativeOnDragDetected(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent, UDragDropOperation*& OutOperation) override;
 
 private:
-	UPROPERTY(meta=(BindWidget)) TObjectPtr<UButton> SlotButton = nullptr;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UImage>  IconImage = nullptr;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UTextBlock> TitleText = nullptr;
 
 	UPROPERTY(Transient) bool bSlotEnabled = true;
 	UPROPERTY(Transient) FGameplayTag AbilityTag;
 	UPROPERTY(Transient) bool bKnown = false;
+
+	const UActionDefinition* ResolveDefinitionFromOwner() const;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UProdigyAbilityTooltipWidget> AbilityTooltipWidget = nullptr;

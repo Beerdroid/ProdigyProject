@@ -20,6 +20,7 @@ protected:
 	virtual void DragCancelled_Implementation(const FPointerEvent& PointerEvent) override
 	{
 		Super::DragCancelled_Implementation(PointerEvent);
-		// No world-drop behavior for abilities.
+		UE_LOG(LogTemp, Warning, TEXT("[AbilityDragCancelled] Tag=%s Handled=%d"),
+			*AbilityTag.ToString(), bDropHandled ? 1 : 0);
 	}
 };

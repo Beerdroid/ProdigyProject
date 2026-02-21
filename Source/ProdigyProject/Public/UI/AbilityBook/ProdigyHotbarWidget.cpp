@@ -41,29 +41,55 @@ bool UProdigyHotbarWidget::IsValidSlotIndex(int32 SlotIndex) const
 
 void UProdigyHotbarWidget::Rebuild()
 {
-	if (!IsValid(SlotsPanel) || !SlotWidgetClass) return;
-
 	if (NumSlots < 1) NumSlots = 1;
+	if (!SlotWidgetClass) return;
 
 	// Ensure entries exist
 	Entries.SetNum(NumSlots);
 
-	SlotsPanel->ClearChildren();
-	SlotWidgets.Reset();
-	SlotWidgets.Reserve(NumSlots);
-
-	for (int32 i = 0; i < NumSlots; ++i)
+	// Prefer SlotRow (your hotbar is a horizontal bar)
+	if (IsValid(SlotRow))
 	{
-		UProdigyHotbarSlotWidget* W = CreateWidget<UProdigyHotbarSlotWidget>(GetOwningPlayer(), SlotWidgetClass);
-		if (!W) continue;
+		SlotRow->ClearChildren();
+		SlotWidgets.Reset();
+		SlotWidgets.Reserve(NumSlots);
 
-		W->InitSlot(this, i);
+		for (int32 i = 0; i < NumSlots; ++i)
+		{
+			UProdigyHotbarSlotWidget* W = CreateWidget<UProdigyHotbarSlotWidget>(GetOwningPlayer(), SlotWidgetClass);
+			if (!IsValid(W)) continue;
 
-		SlotsPanel->AddChild(W);
-		SlotWidgets.Add(W);
+			W->InitSlot(this, i);
+			SlotRow->AddChildToHorizontalBox(W);
+			SlotWidgets.Add(W);
+		}
+
+		RefreshAllSlots();
+		return;
 	}
 
-	RefreshAllSlots();
+	// Fallback to SlotsPanel if you ever use UniformGrid / WrapBox in another BP
+	if (IsValid(SlotsPanel))
+	{
+		SlotsPanel->ClearChildren();
+		SlotWidgets.Reset();
+		SlotWidgets.Reserve(NumSlots);
+
+		for (int32 i = 0; i < NumSlots; ++i)
+		{
+			UProdigyHotbarSlotWidget* W = CreateWidget<UProdigyHotbarSlotWidget>(GetOwningPlayer(), SlotWidgetClass);
+			if (!IsValid(W)) continue;
+
+			W->InitSlot(this, i);
+			SlotsPanel->AddChild(W);
+			SlotWidgets.Add(W);
+		}
+
+		RefreshAllSlots();
+		return;
+	}
+
+	UE_LOG(LogTemp, Error, TEXT("[Hotbar] Rebuild: SlotRow and SlotsPanel are both null. Check WBP bindings."));
 }
 
 void UProdigyHotbarWidget::SetSlotAbility(int32 SlotIndex, FGameplayTag AbilityTag)

@@ -38,24 +38,61 @@ void UProdigyHotbarSlotWidget::NativeConstruct()
 void UProdigyHotbarSlotWidget::HandleClicked()
 {
 	AProdigyPlayerController* PC = GetOwningPlayer<AProdigyPlayerController>();
-	if (!PC) return;
+	UE_LOG(LogTemp, Warning, TEXT("[HotbarClick] Slot=%d Widget=%s PC=%s"),
+		SlotIndex,
+		*GetNameSafe(this),
+		*GetNameSafe(PC));
 
-	if (!OwnerHotbar.IsValid() || SlotIndex == INDEX_NONE) return;
+	if (!PC)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[HotbarClick] ABORT: PC null"));
+		return;
+	}
+
+	if (!OwnerHotbar.IsValid() || SlotIndex == INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[HotbarClick] ABORT: OwnerHotbarValid=%d SlotIndex=%d"),
+			OwnerHotbar.IsValid() ? 1 : 0,
+			SlotIndex);
+		return;
+	}
 
 	const FProdigyHotbarEntry E = OwnerHotbar->GetSlotEntry(SlotIndex);
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[HotbarClick] Entry Slot=%d Type=%d Enabled=%d AbilityTag=%s ItemID=%s"),
+		SlotIndex,
+		(int32)E.Type,
+		E.bEnabled ? 1 : 0,
+		E.AbilityTag.IsValid() ? *E.AbilityTag.ToString() : TEXT("<INVALID>"),
+		E.ItemID.IsNone() ? TEXT("<NONE>") : *E.ItemID.ToString());
+
 	if (!E.bEnabled)
 	{
-		// Show visuals if you want (icon/qty/cd), but disable interaction
+		UE_LOG(LogTemp, Warning, TEXT("[HotbarClick] ABORT: Entry disabled"));
 		ApplyVisuals(false, FText::GetEmpty());
 		return;
 	}
 
 	if (E.Type == EProdigyHotbarEntryType::Ability)
 	{
-		if (E.AbilityTag.IsValid())
+		if (!E.AbilityTag.IsValid())
 		{
-			PC->TryUseAbilityOnLockedTarget(E.AbilityTag);
+			UE_LOG(LogTemp, Warning, TEXT("[HotbarClick] ABORT: Ability entry but tag invalid"));
+			return;
 		}
+
+		AActor* Locked = PC->GetLockedTarget();
+		UE_LOG(LogTemp, Warning, TEXT("[HotbarClick] Ability: Tag=%s LockedTarget=%s"),
+			*E.AbilityTag.ToString(),
+			*GetNameSafe(Locked));
+
+		const bool bOk = PC->TryUseAbilityOnLockedTarget(E.AbilityTag);
+
+		UE_LOG(LogTemp, Warning, TEXT("[HotbarClick] Ability ExecuteResult=%d Tag=%s"),
+			bOk ? 1 : 0,
+			*E.AbilityTag.ToString());
+
 		return;
 	}
 
@@ -63,29 +100,45 @@ void UProdigyHotbarSlotWidget::HandleClicked()
 	{
 		if (E.ItemID.IsNone())
 		{
+			UE_LOG(LogTemp, Warning, TEXT("[HotbarClick] ABORT: Item entry but ItemID None"));
 			return;
 		}
 
 		PC->EnsurePlayerInventoryResolved();
 		UInventoryComponent* Inv = PC->InventoryComponent.Get();
+
+		UE_LOG(LogTemp, Warning, TEXT("[HotbarClick] Item: ItemID=%s Inv=%s"),
+			*E.ItemID.ToString(),
+			*GetNameSafe(Inv));
+
 		if (!IsValid(Inv))
 		{
+			UE_LOG(LogTemp, Warning, TEXT("[HotbarClick] ABORT: Inventory invalid"));
 			return;
 		}
 
 		const int32 FromSlot = FindFirstItemSlotByID(Inv, E.ItemID);
+
+		UE_LOG(LogTemp, Warning, TEXT("[HotbarClick] Item: FirstSlot=%d"), FromSlot);
+
 		if (FromSlot == INDEX_NONE)
 		{
+			UE_LOG(LogTemp, Warning, TEXT("[HotbarClick] ABORT: Item not found in inventory"));
 			return;
 		}
 
 		TArray<int32> Changed;
-		PC->ConsumeFromSlot(FromSlot, Changed);
+		const bool bConsumed = PC->ConsumeFromSlot(FromSlot, Changed);
 
-		// You already broadcast HUD dirty in Attr change / etc, but inventory may change too:
+		UE_LOG(LogTemp, Warning, TEXT("[HotbarClick] Item ConsumeResult=%d ChangedSlots=%d"),
+			bConsumed ? 1 : 0,
+			Changed.Num());
+
 		PC->OnCombatHUDDirty.Broadcast();
 		return;
 	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[HotbarClick] ABORT: Unknown Entry.Type=%d"), (int32)E.Type);
 }
 
 int32 UProdigyHotbarSlotWidget::FindFirstItemSlotByID(UInventoryComponent* Inv, FName ItemID) const
@@ -126,13 +179,28 @@ void UProdigyHotbarSlotWidget::ApplyVisuals(bool bEnabled, const FText& InCooldo
 	}
 }
 
-bool UProdigyHotbarSlotWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent,
+bool UProdigyHotbarSlotWidget::NativeOnDrop(
+	const FGeometry& InGeometry,
+	const FDragDropEvent& InDragDropEvent,
 	UDragDropOperation* InOperation)
 {
-	Super::NativeOnDrop(InGeometry, InDragDropEvent, InOperation);
+	// IMPORTANT: don't call Super first; it may mark handled / do nothing but you lose clarity.
+	UE_LOG(LogTemp, Warning, TEXT("[HotbarSlot Drop] RECEIVED Slot=%d Op=%s"),
+	SlotIndex, *GetNameSafe(InOperation));
 
-	if (!OwnerHotbar.IsValid() || SlotIndex == INDEX_NONE)
+	UE_LOG(LogTemp, Warning, TEXT("NativeOnDrop OpClass=%s"), *GetNameSafe(InOperation->GetClass()));
+
+	UE_LOG(LogTemp, Warning, TEXT("[HotbarSlot Drop] Slot=%d Op=%s"),
+	SlotIndex,
+	*GetNameSafe(InOperation));
+
+	UE_LOG(LogTemp, Warning, TEXT("  AbilityOp=%d InvOp=%d"),
+		InOperation->IsA(UProdigyAbilityDragDropOp::StaticClass()),
+		InOperation->IsA(UInvDragDropOp::StaticClass()));
+
+	if (!OwnerHotbar.IsValid() || SlotIndex == INDEX_NONE || !IsValid(InOperation))
 	{
+		UE_LOG(LogTemp, Warning, TEXT("!OwnerHotbar.IsValid() || SlotIndex == INDEX_NONE || !IsValid(InOperation)"));
 		return false;
 	}
 
@@ -144,6 +212,7 @@ bool UProdigyHotbarSlotWidget::NativeOnDrop(const FGeometry& InGeometry, const F
 			return false;
 		}
 
+
 		OwnerHotbar->SetSlotAbility(SlotIndex, AOp->AbilityTag);
 		AOp->bDropHandled = true;
 		return true;
@@ -152,29 +221,16 @@ bool UProdigyHotbarSlotWidget::NativeOnDrop(const FGeometry& InGeometry, const F
 	// ===== Inventory drag =====
 	if (UInvDragDropOp* IOp = Cast<UInvDragDropOp>(InOperation))
 	{
-		UInventoryComponent* SourceInv = IOp->SourceInventory;
-		if (!IsValid(SourceInv) || !SourceInv->IsValidIndex(IOp->SourceIndex))
+		if (!IsValid(IOp->SourceInventory) || IOp->SourceIndex == INDEX_NONE)
 		{
 			return false;
 		}
 
-		const FInventorySlot S = SourceInv->GetSlot(IOp->SourceIndex);
+		const FInventorySlot S = IOp->SourceInventory->GetSlot(IOp->SourceIndex);
 		if (S.IsEmpty() || S.ItemID.IsNone())
 		{
 			return false;
 		}
-
-		// Optional: if you want to allow ONLY consumables on hotbar, enable this block:
-		/*
-		FItemRow Row;
-		if (SourceInv->TryGetItemDef(S.ItemID, Row))
-		{
-			if (Row.Category != EItemCategory::Consumable)
-			{
-				return false;
-			}
-		}
-		*/
 
 		OwnerHotbar->SetSlotItem(SlotIndex, S.ItemID);
 		IOp->bDropHandled = true;
@@ -198,7 +254,15 @@ void UProdigyHotbarSlotWidget::Refresh()
 	}
 
 	const FProdigyHotbarEntry E = OwnerHotbar->GetSlotEntry(SlotIndex);
-	if (!E.bEnabled) return;
+	if (!E.bEnabled)
+	{
+		// keep slot visible but non-interactive
+		if (IconImage) IconImage->SetBrushFromTexture(nullptr, true);
+		if (QtyText) { QtyText->SetText(FText::GetEmpty()); QtyText->SetVisibility(ESlateVisibility::Hidden); }
+		ClearAbilityTooltip();
+		ApplyVisuals(false, FText::GetEmpty());
+		return;
+	}
 
 	// Empty slot: disable
 	if (E.Type == EProdigyHotbarEntryType::None)

@@ -33,7 +33,7 @@ protected:
 	virtual bool NativeOnDrop(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation) override;
 
 private:
-	UPROPERTY(meta=(BindWidget)) TObjectPtr<UButton> SlotButton = nullptr;
+	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> SlotButton = nullptr;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UImage>  IconImage = nullptr;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UTextBlock> CooldownText = nullptr;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UTextBlock> QtyText = nullptr;

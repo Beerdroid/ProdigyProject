@@ -856,6 +856,7 @@ void AProdigyPlayerController::ShowCombatHUD()
 {
 	if (!CombatHUDClass) return;
 
+	// Create only (placement is centralized in ValidateCombatHUDVisibility -> EnsureHUD)
 	if (!IsValid(CombatHUD))
 	{
 		CombatHUD = CreateWidget<UUserWidget>(this, CombatHUDClass);
@@ -863,18 +864,13 @@ void AProdigyPlayerController::ShowCombatHUD()
 
 		CombatHUD->AddToViewport(2000);
 
-		GetWorldTimerManager().SetTimerForNextTick([this]()
-		{
-			if (!IsValid(CombatHUD)) return;
-			PlaceSingleWidgetBottomCenter(this, CombatHUD, /*BottomPaddingPx*/ 32.f);
-		});
+		// Start hidden; ValidateCombatHUDVisibility will decide + place
+		CombatHUD->SetVisibility(ESlateVisibility::Collapsed);
+		CombatHUD->SetIsEnabled(false);
 	}
 
-	// IMPORTANT: no ValidateCombatHUDVisibility() here
-	CombatHUD->SetVisibility(ESlateVisibility::Visible);
-	CombatHUD->SetIsEnabled(true);
-
-	OnCombatHUDDirty.Broadcast();
+	// Just ensure correct state
+	ValidateCombatHUDVisibility();
 }
 
 void AProdigyPlayerController::HideCombatHUD()
@@ -942,7 +938,7 @@ void AProdigyPlayerController::ValidateCombatHUDVisibility()
 		GetWorldTimerManager().SetTimerForNextTick([this]()
 		{
 			if (!IsValid(CombatHUD)) return;
-			PlaceSingleWidgetBottomCenter(this, CombatHUD, /*BottomPaddingPx*/ 32.f);
+			PlaceSingleWidgetBottomCenter(this, CombatHUD, /*BottomPaddingPx*/ 200.f);
 		});
 
 		// Start hidden until we decide otherwise
@@ -1114,7 +1110,12 @@ void AProdigyPlayerController::ShowSpellBook()
 		if (!IsValid(SpellBookWidget)) return;
 
 		SpellBookWidget->AddToViewport(1600);
-		// You’ll place it however you want later (center, side, etc.)
+
+		GetWorldTimerManager().SetTimerForNextTick([this]()
+		{
+			if (!IsValid(SpellBookWidget)) return;
+			PlaceSingleWidgetCenter(this, SpellBookWidget, /*CenterOffsetPx*/ FVector2D::ZeroVector);
+		});
 	}
 
 	SpellBookWidget->SetVisibility(ESlateVisibility::Visible);

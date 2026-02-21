@@ -10,17 +10,12 @@
 #include "AbilitySystem/ActionDefinition.h"
 
 #include "ProdigyAbilityDragDropOp.h"
+#include "ProdigyAbilityDragVisualWidget.h"
 #include "ProdigyAbilityTooltipWidget.h"
 
 void UProdigySpellBookSlotWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
-
-	if (SlotButton)
-	{
-		SlotButton->OnClicked.RemoveAll(this);
-		SlotButton->OnClicked.AddDynamic(this, &ThisClass::HandleClicked);
-	}
 
 	// Normalize once if designer set SlotTag but no one called Setup()
 	if (!AbilityTag.IsValid() && SlotTag.IsValid())
@@ -103,10 +98,6 @@ void UProdigySpellBookSlotWidget::ApplyKnownState(bool bIsKnown)
 {
 	const bool bCanInteract = bSlotEnabled && bIsKnown && AbilityTag.IsValid();
 
-	if (SlotButton)
-	{
-		SlotButton->SetIsEnabled(bCanInteract);
-	}
 }
 
 
@@ -115,7 +106,9 @@ void UProdigySpellBookSlotWidget::HandleClicked()
 	// SpellBook click can be used for details panel later.
 }
 
-FReply UProdigySpellBookSlotWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+FReply UProdigySpellBookSlotWidget::NativeOnPreviewMouseButtonDown(
+	const FGeometry& InGeometry,
+	const FPointerEvent& InMouseEvent)
 {
 	if (!bSlotEnabled)
 	{
@@ -131,7 +124,7 @@ FReply UProdigySpellBookSlotWidget::NativeOnMouseButtonDown(const FGeometry& InG
 		return FReply::Handled();
 	}
 
-	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+	return Super::NativeOnPreviewMouseButtonDown(InGeometry, InMouseEvent);
 }
 
 void UProdigySpellBookSlotWidget::NativeOnDragDetected(
@@ -152,8 +145,30 @@ void UProdigySpellBookSlotWidget::NativeOnDragDetected(
 		return;
 	}
 
+	UE_LOG(LogTemp, Warning, TEXT("[SpellBook DragDetected] Widget=%s Tag=%s"),
+	*GetNameSafe(this),
+	*AbilityTag.ToString());
+
 	Op->AbilityTag = AbilityTag;
 	Op->Pivot = EDragPivot::MouseDown;
+
+	UE_LOG(LogTemp, Warning, TEXT("OpClass=%s"), *GetNameSafe(Op->GetClass()));
+
+	// Typed drag visual
+	if (DragVisualClass)
+	{
+		UUserWidget* RawWidget = CreateWidget(GetOwningPlayer(), DragVisualClass);
+		UProdigyAbilityDragVisualWidget* Ghost = Cast<UProdigyAbilityDragVisualWidget>(RawWidget);
+
+		if (IsValid(Ghost))
+		{
+			const UActionDefinition* Def = ResolveDefinitionFromOwner();
+			Ghost->SetFromDefinition(Def);
+
+			// IMPORTANT: design the drag visual BP root as HitTestInvisible
+			Op->DefaultDragVisual = Ghost;
+		}
+	}
 
 	OutOperation = Op;
 }
@@ -174,6 +189,26 @@ void UProdigySpellBookSlotWidget::SetAbilityTag(FGameplayTag InAbilityTag)
 {
 	AbilityTag = InAbilityTag;
 	SlotTag = InAbilityTag;
+}
+
+const UActionDefinition* UProdigySpellBookSlotWidget::ResolveDefinitionFromOwner() const
+{
+	AProdigyPlayerController* PC = GetOwningPlayer<AProdigyPlayerController>();
+	APawn* P = PC ? PC->GetPawn() : nullptr;
+	UActionComponent* AC = P ? P->FindComponentByClass<UActionComponent>() : nullptr;
+
+	if (!IsValid(AC) || !AbilityTag.IsValid())
+	{
+		return nullptr;
+	}
+
+	UActionDefinition* Def = nullptr;
+	if (AC->TryGetActionDefinition(AbilityTag, Def) && Def)
+	{
+		return Def;
+	}
+
+	return nullptr;
 }
 
 void UProdigySpellBookSlotWidget::EnsureAbilityTooltip()

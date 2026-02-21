@@ -84,7 +84,7 @@ protected:
 	virtual void NativeDestruct() override;
 
 private:
-	UPROPERTY(meta=(BindWidget))
+	UPROPERTY(meta=(BindWidgetOptional))
 	TObjectPtr<UPanelWidget> SlotsPanel = nullptr;
 
 	// Persistent hotbar assignments (runtime only)
