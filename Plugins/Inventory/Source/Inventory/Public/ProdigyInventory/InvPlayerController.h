@@ -247,7 +247,8 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category="Inventory|Drop")
 	float DropHeightTrace = 5000.f;
 	
-
+	UPROPERTY(Transient) bool bPendingClick = false;
+	UPROPERTY(Transient) FVector PendingClickLocation = FVector::ZeroVector;
 
 	/** A simple drop point in front of the camera/controller. */
 	void GetDropTransform(FVector& OutLoc, FRotator& OutRot) const;

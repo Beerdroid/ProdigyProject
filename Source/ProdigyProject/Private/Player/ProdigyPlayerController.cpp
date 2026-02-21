@@ -395,15 +395,12 @@ bool AProdigyPlayerController::TryLockTarget(AActor* Candidate)
 		return false;
 	}
 
-	// Toggle off
+	// Same target clicked again => keep lock (do NOT toggle off)
 	if (LockedTarget == Candidate)
 	{
-		TARGET_LOG(Log,
-		           TEXT("TryLockTarget: toggle off %s"),
-		           *GetNameSafe(Candidate)
-		);
-		ClearLockedTarget();
-		return true;
+		TARGET_LOG(Verbose, TEXT("TryLockTarget: same target clicked again, keep lock -> %s"),
+			*GetNameSafe(Candidate));
+		return true; // consume click, keep current lock
 	}
 
 	TARGET_LOG(Log,
