@@ -1,5 +1,7 @@
 ﻿#include "AbilitySystem/CombatSubsystem.h"
 
+#include "AIController.h"
+#include "BrainComponent.h"
 #include "EngineUtils.h"
 #include "AbilitySystem/ActionAgentInterface.h"
 #include "AbilitySystem/ActionComponent.h"
@@ -7,7 +9,9 @@
 #include "AbilitySystem/ProdigyAbilityUtils.h"
 #include "AbilitySystem/ProdigyGameplayTags.h"
 #include "AbilitySystem/WorldCombatEvents.h"
+#include "BehaviorTree/BlackboardComponent.h"
 #include "Character/EnemyCombatantCharacter.h"
+#include "Character/AIController/EnemyAIController.h"
 #include "Engine/OverlapResult.h"
 #include "Kismet/GameplayStatics.h"
 
@@ -64,6 +68,17 @@ void UCombatSubsystem::ExitCombat()
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(TimerHandle_AITakeAction);
+	}
+
+	for (TWeakObjectPtr<AActor>& W : Participants)
+	{
+		APawn* P = Cast<APawn>(W.Get());
+		if (!P) continue;
+
+		if (AAIController* AIC = Cast<AAIController>(P->GetController()))
+		{
+			AIC->GetBrainComponent()->StopLogic(TEXT("Combat ended"));
+		}
 	}
 
 	// Unbind + reset combat flags on current participants
@@ -182,10 +197,28 @@ void UCombatSubsystem::BeginTurnForIndex(int32 Index)
 	TryEndCombat_Simple();
 	if (!bInCombat) return;
 
-	if (Participants.Num() == 0) return;
+	const int32 Num = Participants.Num();
+	if (Num <= 0) return;
+
+	// ✅ Index can be invalid after pruning; normalize it
+	Index = (Index % Num + Num) % Num;
+
+	if (!Participants.IsValidIndex(Index))
+	{
+		UE_LOG(LogActionExec, Warning, TEXT("[Combat] BeginTurn: invalid index after normalize Index=%d Num=%d"), Index, Num);
+		ExitCombat();
+		return;
+	}
 
 	AActor* TurnActor = Participants[Index].Get();
-	if (!IsValid(TurnActor)) return;
+	if (!IsValid(TurnActor))
+	{
+		UE_LOG(LogActionExec, Warning, TEXT("[Combat] BeginTurn: TurnActor invalid at Index=%d -> Prune+Advance"), Index);
+		PruneParticipants();
+		if (!bInCombat) return;
+		AdvanceTurn();
+		return;
+	}
 
 	UE_LOG(LogActionExec, Warning, TEXT("[Combat] BeginTurn: Index=%d Actor=%s"),
 		Index, *GetNameSafe(TurnActor));
@@ -208,6 +241,57 @@ void UCombatSubsystem::BeginTurnForIndex(int32 Index)
 	}
 
 	// ---- AI TURN ----
+
+	// ✅ If this pawn is controlled by your EnemyAIController, run BT for the turn and exit.
+	// (BT task should ExecuteAction and on failure call EndCurrentTurn(PawnOwner))
+	if (PawnOwner)
+	{
+		if (AEnemyAIController* EnemyAIC = Cast<AEnemyAIController>(PawnOwner->GetController()))
+		{
+			// Pick a hostile target (faction-aware) from Participants
+			AActor* Target = nullptr;
+			for (const TWeakObjectPtr<AActor>& W : Participants)
+			{
+				AActor* A = W.Get();
+				if (!IsValid(A) || A == TurnActor) continue;
+				if (ProdigyAbilityUtils::IsDeadByAttributes(A)) continue;
+
+				if (AreHostile(TurnActor, A))
+				{
+					Target = A;
+					break;
+				}
+			}
+
+			if (!IsValid(Target))
+			{
+				UE_LOG(LogActionExec, Warning, TEXT("[Combat] AI turn: no hostile target -> passing"));
+				AdvanceTurn();
+				return;
+			}
+
+			// Write BB context for this turn
+			if (UBlackboardComponent* BB = EnemyAIC->GetBlackboardComponent())
+			{
+				BB->SetValueAsObject(ProdigyBB::TargetActor, Target);
+				BB->SetValueAsName(ProdigyBB::ActionTag, TEXT("Action.Attack.Basic")); // minimal default
+			}
+			else
+			{
+				UE_LOG(LogActionExec, Warning, TEXT("[Combat] AI turn: no blackboard on %s -> fallback AI"),
+					*GetNameSafe(EnemyAIC));
+				// fall through to your fallback AI
+			}
+
+			UE_LOG(LogActionExec, Warning, TEXT("[Combat] AI turn: starting BT Controller=%s Pawn=%s Target=%s"),
+				*GetNameSafe(EnemyAIC), *GetNameSafe(PawnOwner), *GetNameSafe(Target));
+
+			EnemyAIC->StartCombatTurn();
+			return;
+		}
+	}
+
+	// ---- Fallback: your current primitive AI (kept so nothing stalls if no BT/controller) ----
 
 	// Pick a target among participants (first valid, non-self, non-dead)
 	AActor* Target = nullptr;
@@ -245,7 +329,6 @@ void UCombatSubsystem::BeginTurnForIndex(int32 Index)
 	UWorld* World = GetWorld();
 	if (!World)
 	{
-		// Fallback: immediate execute, still pass if it fails
 		const FGameplayTag AttackTag = FGameplayTag::RequestGameplayTag(FName("Action.Attack.Basic"));
 		const bool bOk = AC->ExecuteAction(AttackTag, Ctx);
 		if (!bOk)
@@ -256,7 +339,6 @@ void UCombatSubsystem::BeginTurnForIndex(int32 Index)
 		return;
 	}
 
-	// Cancel any pending AI action from previous state
 	World->GetTimerManager().ClearTimer(TimerHandle_AITakeAction);
 
 	const float Delay = FMath::Max(0.f, AITakeActionDelaySeconds);
@@ -265,34 +347,24 @@ void UCombatSubsystem::BeginTurnForIndex(int32 Index)
 	const TWeakObjectPtr<UActionComponent> ACWeak(AC);
 	const TWeakObjectPtr<AActor> TurnWeak(TurnActor);
 	const TWeakObjectPtr<AActor> TargetWeak(Target);
-
-	// capture context by value (safe)
 	const FActionContext LocalCtx = Ctx;
 
 	FTimerDelegate D = FTimerDelegate::CreateLambda([SelfWeak, ACWeak, TurnWeak, TargetWeak, LocalCtx]()
 	{
 		if (!SelfWeak.IsValid()) return;
+		if (!SelfWeak->IsInCombat()) return;
 
-		// Combat ended while waiting
-		if (!SelfWeak->IsInCombat())
-		{
-			return;
-		}
-
-		// Actor/target vanished
 		if (!ACWeak.IsValid() || !TurnWeak.IsValid() || !TargetWeak.IsValid())
 		{
 			SelfWeak->AdvanceTurn();
 			return;
 		}
 
-		// Still must be the current turn actor when we act
 		if (SelfWeak->GetCurrentTurnActor() != TurnWeak.Get())
 		{
 			return;
 		}
 
-		// Target died while waiting -> pass
 		if (ProdigyAbilityUtils::IsDeadByAttributes(TargetWeak.Get()))
 		{
 			UE_LOG(LogActionExec, Warning, TEXT("[Combat] AI target died while waiting -> passing"));
@@ -303,8 +375,6 @@ void UCombatSubsystem::BeginTurnForIndex(int32 Index)
 		const FGameplayTag AttackTag = FGameplayTag::RequestGameplayTag(FName("Action.Attack.Basic"));
 		const bool bOk = ACWeak->ExecuteAction(AttackTag, LocalCtx);
 
-		// If blocked (cooldown / AP / invalid), PASS TURN so combat never stalls.
-		// If succeeded, your existing "action executed" flow should AdvanceTurn().
 		if (!bOk)
 		{
 			UE_LOG(LogActionExec, Warning, TEXT("[Combat] AI action failed -> passing turn (%s)"),
@@ -315,13 +385,11 @@ void UCombatSubsystem::BeginTurnForIndex(int32 Index)
 
 	if (Delay <= 0.f)
 	{
-		// still avoid re-entrancy (next tick)
 		World->GetTimerManager().SetTimerForNextTick(D);
 	}
 	else
 	{
 		World->GetTimerManager().SetTimer(TimerHandle_AITakeAction, D, Delay, false);
-
 		UE_LOG(LogActionExec, Warning, TEXT("[Combat] AI scheduled: Actor=%s Delay=%.2f"),
 			*GetNameSafe(TurnActor), Delay);
 	}
@@ -381,35 +449,21 @@ void UCombatSubsystem::HandleActionExecuted(FGameplayTag ActionTag, const FActio
 		return;
 	}
 
-	// ✅ Defer pruning by one tick so killing-blow cues can spawn before ExitCombat clears state / gates cues.
+	// Defer prune/end check by 1 tick so hit/kill cues can spawn first
 	if (UWorld* World = GetWorld())
 	{
 		const TWeakObjectPtr<UCombatSubsystem> SelfWeak(this);
-
 		World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateLambda([SelfWeak]()
 		{
 			if (!SelfWeak.IsValid()) return;
 			if (!SelfWeak->IsInCombat()) return;
-
-			// This prunes + ends combat if player dead OR all enemies dead
 			SelfWeak->TryEndCombat_Simple();
 		}));
 	}
 
-	// ✅ Player can act multiple times per turn; only EndTurn should advance.
-	const APawn* PawnOwner = Cast<APawn>(Current);
-	const bool bIsPlayer = PawnOwner && PawnOwner->IsPlayerControlled();
-	if (bIsPlayer)
-	{
-		UE_LOG(LogActionExec, Verbose,
-			TEXT("[Combat] ActionExecuted by player: staying on same turn (wait for EndTurn)"));
-		return;
-	}
-	// AI: after a successful action, first see if combat ended.
-	TryEndCombat_Simple();
-	if (!bInCombat) return;
-
-	AdvanceTurn();
+	// STYLE B RULE:
+	// Do NOT AdvanceTurn here for AI. The BT will end the turn via BTT_EndCombatTurn.
+	// Player also ends via UI calling EndCurrentTurn().
 }
 
 bool UCombatSubsystem::EndCurrentTurn(AActor* Instigator)
