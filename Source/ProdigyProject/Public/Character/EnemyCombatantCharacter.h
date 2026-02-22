@@ -24,4 +24,8 @@ public:
 	// When aggro triggers, pull nearby enemies into the same combat
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AI|Aggro", meta=(ClampMin="0.0"))
 	float AllyJoinRadius = 1100.f;
+
+	// NEW: Faction identity (used to decide who counts as "ally")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AI|Faction")
+	FGameplayTag FactionTag;
 };

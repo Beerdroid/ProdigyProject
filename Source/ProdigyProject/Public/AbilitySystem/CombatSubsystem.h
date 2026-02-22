@@ -8,6 +8,7 @@ struct FActionContext;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCombatTurnActorChanged, AActor*, CurrentTurnActor);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCombatStateChanged, bool, bNowInCombat);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnParticipantsChanged);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnCombatAITurnBegan, AActor*, AIActor, AActor*, TargetActor);
 
 UCLASS()
 class PRODIGYPROJECT_API UCombatSubsystem : public UGameInstanceSubsystem
@@ -15,6 +16,13 @@ class PRODIGYPROJECT_API UCombatSubsystem : public UGameInstanceSubsystem
 	GENERATED_BODY()
 
 public:
+
+	UPROPERTY(BlueprintAssignable, Category="Combat|Events")
+	FOnCombatAITurnBegan OnAITurnBegan;
+
+	// Call this from AI systems (BT/task/controller) to take over the AI turn.
+	UFUNCTION(BlueprintCallable, Category="Combat|AI")
+	void MarkAITurnHandled(AActor* AIActor);
 
 	// Delay between end of one turn and begin of next turn (seconds)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Combat|Timing")
@@ -95,6 +103,16 @@ public:
 	UFUNCTION()
 	void HandleWorldEffectApplied(AActor* TargetActor, AActor* InstigatorActor, FGameplayTag ActionTag);
 
+	UFUNCTION(BlueprintCallable, Category="Combat|Faction")
+	static bool AreHostile(const AActor* A, const AActor* B);
+
+	static FGameplayTag GetFactionTag(const AActor* Actor);
+
+	bool IsPlayerDead() const;
+	bool AreAllEnemiesDead() const;
+
+	void TryEndCombat_Simple();
+
 private:
 
 	FTimerHandle TimerHandle_BeginTurn;
@@ -102,6 +120,12 @@ private:
 
 	void CancelScheduledBeginTurn();
 	void HandleScheduledBeginTurn();
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<AActor> CurrentAITurnActor;
+
+	UPROPERTY(Transient)
+	bool bCurrentAITurnHandled = false;
 
 	void BuildParticipantsForAggro(AActor* AggroActor, AActor* PlayerPawn, TArray<AActor*>& OutParticipants) const;
 

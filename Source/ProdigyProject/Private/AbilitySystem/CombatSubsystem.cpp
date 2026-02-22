@@ -178,24 +178,27 @@ void UCombatSubsystem::BeginTurnForIndex(int32 Index)
 	PruneParticipants();
 	if (!bInCombat) return;
 
+	// NEW: if last enemy died during delay, end now
+	TryEndCombat_Simple();
+	if (!bInCombat) return;
+
 	if (Participants.Num() == 0) return;
-	if (!Participants.IsValidIndex(Index)) return;
 
 	AActor* TurnActor = Participants[Index].Get();
 	if (!IsValid(TurnActor)) return;
 
 	UE_LOG(LogActionExec, Warning, TEXT("[Combat] BeginTurn: Index=%d Actor=%s"),
-	       Index, *GetNameSafe(TurnActor));
+		Index, *GetNameSafe(TurnActor));
 
-	// ✅ only begin-turn work now (AP refresh etc.)
-	if (UActionComponent* AC = TurnActor->FindComponentByClass<UActionComponent>())
+	// Begin-turn work (AP refresh etc.)
+	if (UActionComponent* TurnAC = TurnActor->FindComponentByClass<UActionComponent>())
 	{
-		AC->OnTurnBegan();
+		TurnAC->OnTurnBegan();
 	}
 
 	OnTurnActorChanged.Broadcast(TurnActor);
 
-	// Player waits
+	// Player waits for input
 	APawn* PawnOwner = Cast<APawn>(TurnActor);
 	const bool bIsPlayer = PawnOwner && PawnOwner->IsPlayerControlled();
 	if (bIsPlayer)
@@ -206,17 +209,19 @@ void UCombatSubsystem::BeginTurnForIndex(int32 Index)
 
 	// ---- AI TURN ----
 
-	// Choose target (simple 2-participant case)
+	// Pick a target among participants (first valid, non-self, non-dead)
 	AActor* Target = nullptr;
 	for (const TWeakObjectPtr<AActor>& W : Participants)
 	{
 		AActor* A = W.Get();
-		if (IsValid(A) && A != TurnActor && !ProdigyAbilityUtils::IsDeadByAttributes(A))
-		{
-			Target = A;
-			break;
-		}
+		if (!IsValid(A)) continue;
+		if (A == TurnActor) continue;
+		if (ProdigyAbilityUtils::IsDeadByAttributes(A)) continue;
+
+		Target = A;
+		break;
 	}
+
 	if (!IsValid(Target))
 	{
 		UE_LOG(LogActionExec, Warning, TEXT("[Combat] AI turn: no valid target -> passing"));
@@ -237,79 +242,88 @@ void UCombatSubsystem::BeginTurnForIndex(int32 Index)
 	Ctx.Instigator = TurnActor;
 	Ctx.TargetActor = Target;
 
-	// Execute after an optional AI delay (and still avoid re-entrancy)
-	if (UWorld* World = GetWorld())
-	{
-		// Cancel any pending AI action from previous state
-		World->GetTimerManager().ClearTimer(TimerHandle_AITakeAction);
-
-		const float Delay = FMath::Max(0.f, AITakeActionDelaySeconds);
-
-		const TWeakObjectPtr<UCombatSubsystem> SelfWeak(this);
-		const TWeakObjectPtr<UActionComponent> ACWeak(AC);
-		const TWeakObjectPtr<AActor> TurnWeak(TurnActor);
-		const TWeakObjectPtr<AActor> TargetWeak(Target);
-
-		// IMPORTANT: capture a *fresh* context that uses the chosen target
-		FActionContext LocalCtx = Ctx;
-
-		FTimerDelegate D = FTimerDelegate::CreateLambda([SelfWeak, ACWeak, TurnWeak, TargetWeak, LocalCtx]()
-		{
-			if (!SelfWeak.IsValid()) return;
-
-			// If combat ended while waiting
-			if (!SelfWeak->IsInCombat())
-			{
-				return;
-			}
-
-			if (!ACWeak.IsValid() || !TurnWeak.IsValid() || !TargetWeak.IsValid())
-			{
-				SelfWeak->AdvanceTurn();
-				return;
-			}
-
-			// Still must be the current actor when we act
-			if (SelfWeak->GetCurrentTurnActor() != TurnWeak.Get())
-			{
-				return;
-			}
-
-			const FGameplayTag AttackTag = FGameplayTag::RequestGameplayTag(FName("Action.Attack.Basic"));
-			const bool bOk = ACWeak->ExecuteAction(AttackTag, LocalCtx);
-
-			// If blocked (cooldown / AP / invalid), PASS TURN so combat never stalls.
-			if (!bOk)
-			{
-				UE_LOG(LogActionExec, Warning, TEXT("[Combat] AI action failed -> passing turn (%s)"),
-				       *GetNameSafe(TurnWeak.Get()));
-				SelfWeak->AdvanceTurn();
-			}
-			// If succeeded, HandleActionExecuted will AdvanceTurn() normally.
-		});
-
-		if (Delay <= 0.f)
-		{
-			// still avoid re-entrancy (next tick)
-			World->GetTimerManager().SetTimerForNextTick(D);
-		}
-		else
-		{
-			World->GetTimerManager().SetTimer(TimerHandle_AITakeAction, D, Delay, false);
-
-			UE_LOG(LogActionExec, Warning, TEXT("[Combat] AI scheduled: Actor=%s Delay=%.2f"),
-			       *GetNameSafe(TurnActor), Delay);
-		}
-	}
-	else
+	UWorld* World = GetWorld();
+	if (!World)
 	{
 		// Fallback: immediate execute, still pass if it fails
-		const bool bOk = AC->ExecuteAction(FGameplayTag::RequestGameplayTag(FName("Action.Attack.Basic")), Ctx);
+		const FGameplayTag AttackTag = FGameplayTag::RequestGameplayTag(FName("Action.Attack.Basic"));
+		const bool bOk = AC->ExecuteAction(AttackTag, Ctx);
 		if (!bOk)
 		{
 			UE_LOG(LogActionExec, Warning, TEXT("[Combat] AI action failed (no world) -> passing turn"));
 			AdvanceTurn();
 		}
+		return;
+	}
+
+	// Cancel any pending AI action from previous state
+	World->GetTimerManager().ClearTimer(TimerHandle_AITakeAction);
+
+	const float Delay = FMath::Max(0.f, AITakeActionDelaySeconds);
+
+	const TWeakObjectPtr<UCombatSubsystem> SelfWeak(this);
+	const TWeakObjectPtr<UActionComponent> ACWeak(AC);
+	const TWeakObjectPtr<AActor> TurnWeak(TurnActor);
+	const TWeakObjectPtr<AActor> TargetWeak(Target);
+
+	// capture context by value (safe)
+	const FActionContext LocalCtx = Ctx;
+
+	FTimerDelegate D = FTimerDelegate::CreateLambda([SelfWeak, ACWeak, TurnWeak, TargetWeak, LocalCtx]()
+	{
+		if (!SelfWeak.IsValid()) return;
+
+		// Combat ended while waiting
+		if (!SelfWeak->IsInCombat())
+		{
+			return;
+		}
+
+		// Actor/target vanished
+		if (!ACWeak.IsValid() || !TurnWeak.IsValid() || !TargetWeak.IsValid())
+		{
+			SelfWeak->AdvanceTurn();
+			return;
+		}
+
+		// Still must be the current turn actor when we act
+		if (SelfWeak->GetCurrentTurnActor() != TurnWeak.Get())
+		{
+			return;
+		}
+
+		// Target died while waiting -> pass
+		if (ProdigyAbilityUtils::IsDeadByAttributes(TargetWeak.Get()))
+		{
+			UE_LOG(LogActionExec, Warning, TEXT("[Combat] AI target died while waiting -> passing"));
+			SelfWeak->AdvanceTurn();
+			return;
+		}
+
+		const FGameplayTag AttackTag = FGameplayTag::RequestGameplayTag(FName("Action.Attack.Basic"));
+		const bool bOk = ACWeak->ExecuteAction(AttackTag, LocalCtx);
+
+		// If blocked (cooldown / AP / invalid), PASS TURN so combat never stalls.
+		// If succeeded, your existing "action executed" flow should AdvanceTurn().
+		if (!bOk)
+		{
+			UE_LOG(LogActionExec, Warning, TEXT("[Combat] AI action failed -> passing turn (%s)"),
+				*GetNameSafe(TurnWeak.Get()));
+			SelfWeak->AdvanceTurn();
+		}
+	});
+
+	if (Delay <= 0.f)
+	{
+		// still avoid re-entrancy (next tick)
+		World->GetTimerManager().SetTimerForNextTick(D);
+	}
+	else
+	{
+		World->GetTimerManager().SetTimer(TimerHandle_AITakeAction, D, Delay, false);
+
+		UE_LOG(LogActionExec, Warning, TEXT("[Combat] AI scheduled: Actor=%s Delay=%.2f"),
+			*GetNameSafe(TurnActor), Delay);
 	}
 }
 
@@ -324,6 +338,11 @@ void UCombatSubsystem::AdvanceTurn()
 
 	PruneParticipants();
 	if (!bInCombat) return;
+
+	// NEW: end-check after prune
+	TryEndCombat_Simple();
+	if (!bInCombat) return;
+
 	if (Participants.Num() == 0) return;
 
 	// Guard: don't schedule another begin-turn if one is already queued
@@ -372,21 +391,24 @@ void UCombatSubsystem::HandleActionExecuted(FGameplayTag ActionTag, const FActio
 			if (!SelfWeak.IsValid()) return;
 			if (!SelfWeak->IsInCombat()) return;
 
-			SelfWeak->PruneParticipants();
+			// This prunes + ends combat if player dead OR all enemies dead
+			SelfWeak->TryEndCombat_Simple();
 		}));
 	}
 
 	// ✅ Player can act multiple times per turn; only EndTurn should advance.
-	APawn* PawnOwner = Cast<APawn>(Current);
+	const APawn* PawnOwner = Cast<APawn>(Current);
 	const bool bIsPlayer = PawnOwner && PawnOwner->IsPlayerControlled();
 	if (bIsPlayer)
 	{
 		UE_LOG(LogActionExec, Verbose,
-			   TEXT("[Combat] ActionExecuted by player: staying on same turn (wait for EndTurn)"));
+			TEXT("[Combat] ActionExecuted by player: staying on same turn (wait for EndTurn)"));
 		return;
 	}
+	// AI: after a successful action, first see if combat ended.
+	TryEndCombat_Simple();
+	if (!bInCombat) return;
 
-	// ✅ AI still advances automatically after a successful action
 	AdvanceTurn();
 }
 
@@ -400,8 +422,12 @@ bool UCombatSubsystem::EndCurrentTurn(AActor* Instigator)
 
 	UE_LOG(LogActionExec, Warning, TEXT("[Combat] EndCurrentTurn: %s"), *GetNameSafe(Instigator));
 
-	AdvanceTurn();
+	// Player might have killed the last enemy and then pressed End Turn.
+	// Don’t schedule next turn if combat should end.
+	TryEndCombat_Simple();
+	if (!bInCombat) return true;
 
+	AdvanceTurn();
 	return true;
 }
 
@@ -420,9 +446,9 @@ void UCombatSubsystem::PruneParticipants()
 		OnParticipantsChanged.Broadcast();
 	}
 
-	if (Participants.Num() <= 1)
+	if (Participants.Num() == 0)
 	{
-		ExitCombat();   // ExitCombat already broadcasts CombatStateChanged / TurnActorChanged
+		// don’t auto-exit here; end condition is handled by TryEndCombat_Simple()
 		return;
 	}
 
@@ -659,6 +685,97 @@ void UCombatSubsystem::HandleWorldEffectApplied(AActor* TargetActor, AActor* Ins
 	EnterCombat(Parts, /*FirstToAct*/ PlayerPawn);
 }
 
+bool UCombatSubsystem::AreHostile(const AActor* A, const AActor* B)
+{
+	if (!IsValid(A) || !IsValid(B) || A == B) return false;
+
+	const FGameplayTag FA = GetFactionTag(A);
+	const FGameplayTag FB = GetFactionTag(B);
+
+	// If either missing, fallback to “enemy vs player” only (safe default)
+	if (!FA.IsValid() || !FB.IsValid())
+	{
+		const bool bAIsEnemy = A->IsA(AEnemyCombatantCharacter::StaticClass());
+		const bool bBIsEnemy = B->IsA(AEnemyCombatantCharacter::StaticClass());
+		const bool bAIsPlayer = Cast<APawn>(A) && Cast<APawn>(A)->IsPlayerControlled();
+		const bool bBIsPlayer = Cast<APawn>(B) && Cast<APawn>(B)->IsPlayerControlled();
+		return (bAIsEnemy && bBIsPlayer) || (bBIsEnemy && bAIsPlayer);
+	}
+
+	// Simple rule for now: different factions are hostile
+	return !FA.MatchesTagExact(FB);
+}
+
+FGameplayTag UCombatSubsystem::GetFactionTag(const AActor* Actor)
+{
+	if (!IsValid(Actor)) return FGameplayTag();
+
+	// Enemies
+	if (const AEnemyCombatantCharacter* E = Cast<AEnemyCombatantCharacter>(Actor))
+	{
+		return E->FactionTag;
+	}
+
+	// Player pawn: you can add a tag later if needed; for now treat player as "Player"
+	// If you want: add FactionTag to ACombatantCharacterBase to unify.
+	return FGameplayTag::RequestGameplayTag(FName("Faction.Player"));
+}
+
+bool UCombatSubsystem::IsPlayerDead() const
+{
+	UWorld* World = GetWorld();
+	if (!World) return false;
+
+	APawn* PlayerPawn = UGameplayStatics::GetPlayerPawn(World, 0);
+	if (!IsValid(PlayerPawn)) return false;
+
+	return ProdigyAbilityUtils::IsDeadByAttributes(PlayerPawn);
+}
+
+bool UCombatSubsystem::AreAllEnemiesDead() const
+{
+	bool bHasAnyEnemy = false;
+
+	for (const TWeakObjectPtr<AActor>& W : Participants)
+	{
+		AActor* A = W.Get();
+		if (!IsValid(A)) continue;
+
+		AEnemyCombatantCharacter* Enemy = Cast<AEnemyCombatantCharacter>(A);
+		if (!IsValid(Enemy)) continue;
+
+		bHasAnyEnemy = true;
+
+		if (!ProdigyAbilityUtils::IsDeadByAttributes(Enemy))
+		{
+			return false; // at least one enemy alive
+		}
+	}
+
+	// If no enemies in participants, treat as resolved.
+	return !bHasAnyEnemy;
+}
+
+void UCombatSubsystem::TryEndCombat_Simple()
+{
+	if (!bInCombat) return;
+
+	PruneParticipants();
+
+	const bool bPlayerDead = IsPlayerDead();
+	const bool bEnemiesDead = AreAllEnemiesDead();
+
+	if (bPlayerDead || bEnemiesDead)
+	{
+		UE_LOG(LogActionExec, Warning,
+			TEXT("[CombatSubsystem] EndCombat(Simple) PlayerDead=%d EnemiesDead=%d"),
+			bPlayerDead ? 1 : 0,
+			bEnemiesDead ? 1 : 0);
+
+		ExitCombat(); // your existing exit
+	}
+}
+
 void UCombatSubsystem::CancelScheduledBeginTurn()
 {
 	if (UWorld* World = GetWorld())
@@ -667,6 +784,22 @@ void UCombatSubsystem::CancelScheduledBeginTurn()
 	}
 	bTurnBeginScheduled = false;
 	PendingTurnIndex = INDEX_NONE;
+}
+
+void UCombatSubsystem::MarkAITurnHandled(AActor* AIActor)
+{
+	if (!bInCombat) return;
+	if (!IsValid(AIActor)) return;
+
+	// Only accept a mark for the current AI turn actor
+	if (CurrentAITurnActor.Get() != AIActor)
+	{
+		return;
+	}
+
+	bCurrentAITurnHandled = true;
+
+	UE_LOG(LogActionExec, Warning, TEXT("[CombatSubsystem] MarkAITurnHandled Actor=%s"), *GetNameSafe(AIActor));
 }
 
 void UCombatSubsystem::ScheduleBeginTurnForIndex(int32 Index, float DelaySeconds)
@@ -716,6 +849,11 @@ void UCombatSubsystem::HandleScheduledBeginTurn()
 
 	PruneParticipants();
 	if (!bInCombat) return;
+
+	// NEW: end-check before setting TurnIndex and calling BeginTurn
+	TryEndCombat_Simple();
+	if (!bInCombat) return;
+
 	if (Participants.Num() == 0) return;
 
 	if (PendingTurnIndex == INDEX_NONE)
@@ -734,7 +872,9 @@ void UCombatSubsystem::HandleScheduledBeginTurn()
 	BeginTurnForIndex(TurnIndex);
 }
 
-void UCombatSubsystem::BuildParticipantsForAggro(AActor* AggroActor, AActor* PlayerPawn,
+void UCombatSubsystem::BuildParticipantsForAggro(
+	AActor* AggroActor,
+	AActor* PlayerPawn,
 	TArray<AActor*>& OutParticipants) const
 {
 	OutParticipants.Reset();
@@ -760,7 +900,9 @@ void UCombatSubsystem::BuildParticipantsForAggro(AActor* AggroActor, AActor* Pla
 		return;
 	}
 
+	const FGameplayTag AggroFaction = AggroEnemy->FactionTag;
 	const float Radius = FMath::Max(0.f, AggroEnemy->AllyJoinRadius);
+
 	if (Radius <= 0.f)
 	{
 		return;
@@ -779,8 +921,6 @@ void UCombatSubsystem::BuildParticipantsForAggro(AActor* AggroActor, AActor* Pla
 
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(Combat_AllyJoin), /*bTraceComplex*/ false);
 	QueryParams.AddIgnoredActor(AggroActor);
-
-	// ✅ reduce junk hits: ignore player too (no behavior change, only less work)
 	if (IsValid(PlayerPawn))
 	{
 		QueryParams.AddIgnoredActor(PlayerPawn);
@@ -799,10 +939,11 @@ void UCombatSubsystem::BuildParticipantsForAggro(AActor* AggroActor, AActor* Pla
 	);
 
 	UE_LOG(LogActionExec, Warning,
-		TEXT("[CombatSubsystem] AllyJoin overlap Aggro=%s Radius=%.1f Hits=%d"),
+		TEXT("[CombatSubsystem] AllyJoin overlap Aggro=%s Radius=%.1f Hits=%d AggroFaction=%s"),
 		*GetNameSafe(AggroActor),
 		Radius,
-		bAny ? Overlaps.Num() : 0);
+		bAny ? Overlaps.Num() : 0,
+		AggroFaction.IsValid() ? *AggroFaction.ToString() : TEXT("None"));
 
 	if (!bAny)
 	{
@@ -817,11 +958,34 @@ void UCombatSubsystem::BuildParticipantsForAggro(AActor* AggroActor, AActor* Pla
 		AEnemyCombatantCharacter* OtherEnemy = Cast<AEnemyCombatantCharacter>(Other);
 		if (!IsValid(OtherEnemy)) continue;
 
-		// Designers can opt-out per enemy
+		// Designer opt-out
 		if (!OtherEnemy->bAggressive) continue;
 
-		// Must be a valid combatant per your existing rules
+		// Must be combat-ready per your rules
 		if (!IsValidCombatant(OtherEnemy)) continue;
+
+		// Don’t pull dead allies
+		if (ProdigyAbilityUtils::IsDeadByAttributes(OtherEnemy)) continue;
+
+		// ---- Faction gate ----
+		if (AggroFaction.IsValid())
+		{
+			// Strict once faction is set
+			if (!OtherEnemy->FactionTag.MatchesTagExact(AggroFaction))
+			{
+				continue;
+			}
+		}
+		else
+		{
+			// Fallback for current “None” world:
+			// Only pull exact same class as the aggro enemy.
+			// (Prevents future “bandits + monsters” cross-pulls until you set faction tags.)
+			if (OtherEnemy->GetClass() != AggroEnemy->GetClass())
+			{
+				continue;
+			}
+		}
 
 		OutParticipants.AddUnique(OtherEnemy);
 	}

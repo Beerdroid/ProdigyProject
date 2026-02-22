@@ -98,3 +98,14 @@ namespace ProdigyTags::Effect
 	UE_DEFINE_GAMEPLAY_TAG(Poison,     "Effect.Poison");
 	UE_DEFINE_GAMEPLAY_TAG(Bleed,  "Effect.Bleed");
 }
+
+// =======================
+// FACTION TAGS
+// =======================
+namespace ProdigyTags::Faction
+{
+	UE_DEFINE_GAMEPLAY_TAG(Bandits,    "Faction.Bandits");
+	UE_DEFINE_GAMEPLAY_TAG(Cult, "Faction.Cult");
+	UE_DEFINE_GAMEPLAY_TAG(Security,     "Faction.Security");
+	UE_DEFINE_GAMEPLAY_TAG(Player,     "Faction.Player");
+}
